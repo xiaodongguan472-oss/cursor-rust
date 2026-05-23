@@ -65,13 +65,13 @@ fn save_settings_to_file(settings: &AppSettings) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn get_settings() -> AppSettings {
-    println!("[Settings] get_settings 被调用");
+    utils::dlog!("[Settings] get_settings 被调用");
     load_settings()
 }
 
 #[tauri::command]
 pub async fn save_settings(settings: AppSettings) -> Result<bool, String> {
-    println!("[Settings] save_settings 被调用");
+    utils::dlog!("[Settings] save_settings 被调用");
     save_settings_to_file(&settings)?;
     Ok(true)
 }

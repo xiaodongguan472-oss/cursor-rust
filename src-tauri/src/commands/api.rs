@@ -2,7 +2,7 @@ use super::utils;
 
 #[tauri::command]
 pub async fn get_latest_notice() -> serde_json::Value {
-    println!("[API] get_latest_notice 被调用");
+    utils::dlog!("[API] get_latest_notice 被调用");
     let api_url = utils::api_url(obfstr::obfstr!("/hou/csk/notice/latest"));
     let api_url = api_url.as_str();
     match utils::http_get_json(api_url).await {
@@ -24,7 +24,7 @@ pub async fn get_latest_notice() -> serde_json::Value {
             })
         }
         Err(e) => {
-            println!("[API] get_latest_notice 请求失败: {}", e);
+            utils::dlog!("[API] get_latest_notice 请求失败: {}", e);
             serde_json::json!({
                 "success": true,
                 "data": {
@@ -41,7 +41,7 @@ pub async fn get_latest_notice() -> serde_json::Value {
 
 #[tauri::command]
 pub async fn get_latest_tool_version() -> serde_json::Value {
-    println!("[API] get_latest_tool_version 被调用");
+    utils::dlog!("[API] get_latest_tool_version 被调用");
     let system_type = if cfg!(target_os = "windows") {
         "windows"
     } else if cfg!(target_os = "macos") {
@@ -71,10 +71,10 @@ pub async fn get_latest_tool_version() -> serde_json::Value {
                     "data": result.get("data")
                 });
             }
-            println!("[API] toolVersion 接口返回非成功: {:?}", result);
+            utils::dlog!("[API] toolVersion 接口返回非成功: {:?}", result);
         }
         Err(e) => {
-            println!("[API] toolVersion 接口失败: {}, 尝试旧接口", e);
+            utils::dlog!("[API] toolVersion 接口失败: {}, 尝试旧接口", e);
         }
     }
 
@@ -112,7 +112,7 @@ pub async fn get_latest_tool_version() -> serde_json::Value {
 
 #[tauri::command]
 pub async fn get_latest_popup() -> serde_json::Value {
-    println!("[API] get_latest_popup 被调用");
+    utils::dlog!("[API] get_latest_popup 被调用");
     let api_url = utils::api_url(obfstr::obfstr!("/hou/csk/popup/latest"));
     let api_url = api_url.as_str();
     match utils::http_get_json(api_url).await {
@@ -169,7 +169,7 @@ pub async fn get_qrcode_image() -> serde_json::Value {
 
 #[tauri::command]
 pub async fn check_version_update() -> serde_json::Value {
-    println!("[API] check_version_update 被调用");
+    utils::dlog!("[API] check_version_update 被调用");
     let app_version = env!("CARGO_PKG_VERSION");
     // 传递当前版本号，后端根据版本判断是否需要强制更新
     let api_url = format!(
@@ -181,7 +181,7 @@ pub async fn check_version_update() -> serde_json::Value {
 
     match utils::http_get_json(&api_url).await {
         Ok(result) => {
-            println!("[API] check_version_update 返回: {:?}", result);
+            utils::dlog!("[API] check_version_update 返回: {:?}", result);
             let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
             if success {
                 if let Some(data) = result.get("data") {
@@ -199,7 +199,7 @@ pub async fn check_version_update() -> serde_json::Value {
             })
         }
         Err(e) => {
-            println!("[API] check_version_update 失败: {}", e);
+            utils::dlog!("[API] check_version_update 失败: {}", e);
             serde_json::json!({
                 "success": false,
                 "currentVersion": app_version

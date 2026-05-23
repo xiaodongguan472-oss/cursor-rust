@@ -2,6 +2,17 @@ use std::path::PathBuf;
 #[cfg_attr(not(target_os = "windows"), allow(unused_imports))]
 use std::env;
 
+// Release 模式下所有调试日志完全移除（防止 strings 提取模块信息）
+#[cfg(debug_assertions)]
+macro_rules! dlog {
+    ($($arg:tt)*) => { println!($($arg)*) }
+}
+#[cfg(not(debug_assertions))]
+macro_rules! dlog {
+    ($($arg:tt)*) => {}
+}
+pub(crate) use dlog;
+
 // ============================================================================
 // 反逆向：API URL 混淆助手
 // 所有调用方都通过 api_base() / api_url(path) 拼接，硬编码字面量被 obfstr 加密

@@ -5,90 +5,34 @@ mod commands;
 use commands::*;
 
 fn main() {
+    // Release 模式：自定义 panic hook，隐藏源码文件路径
+    #[cfg(not(debug_assertions))]
+    std::panic::set_hook(Box::new(|_| {
+        std::process::abort();
+    }));
+
     // 反逆向：拒绝调试器附加 + 后台监控（必须在 tauri 启动前）
     commands::anti_debug::init();
 
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            // Settings
-            settings::get_settings,
-            settings::save_settings,
-            settings::quit_app,
-            // Cursor paths
-            cursor_paths::get_cursor_paths,
-            cursor_paths::get_user_data_path,
-            // Machine ID
-            machine_id::get_machine_id,
-            machine_id::reset_cursor_machine_id,
-            machine_id::reset_machine_ids_standalone,
-            // Database
-            database::find_all_cursor_databases,
-            database::manual_search_cursor_database,
-            database::update_cursor_sqlite_db,
-            database::update_cursor_auth,
-            database::logout_current_cursor_account,
-            database::python_style_account_switch,
-            // File operations
-            file_ops::read_file_content,
-            file_ops::write_file_content,
-            file_ops::open_file_dialog,
-            file_ops::open_folder_dialog,
-            file_ops::open_external_url,
-            // Cursor file modification
-            cursor_modify::modify_cursor_main_js,
-            cursor_modify::analyze_cursor_file,
-            cursor_modify::restore_cursor_backup,
-            cursor_modify::modify_cursor_workbench,
-            // Cursor process management
-            cursor_process::check_cursor_running,
-            cursor_process::force_close_cursor,
-            cursor_process::restart_cursor,
-            cursor_process::restart_cursor_complete,
-            cursor_process::launch_cursor,
-            // Card verification
-            card::verify_card,
-            card::verify_card_only,
-            card::get_card_info,
-            card::save_card_info,
-            card::load_card_info,
-            card::clear_card_info,
-            card::record_usage,
-            // API calls
-            api::get_latest_notice,
-            api::get_latest_tool_version,
-            api::get_latest_popup,
-            api::get_qrcode_image,
-            api::check_version_update,
-            // Permissions
-            permissions::get_current_permissions,
-            permissions::disable_cursor_auto_update,
-            // Model settings
-            model::set_cursor_default_model,
-            // Proxy settings
-            proxy::check_cursor_settings_status,
-            proxy::update_cursor_settings,
-            // Seamless switch
-            seamless_switch::patch_ext_host,
-            seamless_switch::unpatch_ext_host,
-            seamless_switch::check_ext_host_patched,
-            seamless_switch::write_active_token,
-            seamless_switch::read_active_token,
-            seamless_switch::clear_active_token,
-            seamless_switch::check_cursor_usage,
-            seamless_switch::get_cursor_account_quota,
-            seamless_switch::seamless_switch_cmd,
-            seamless_switch::one_click_switch,
-            seamless_switch::toggle_auto_switch,
-            seamless_switch::get_auto_switch_status,
-            // Workspace
-            workspace::save_current_workspace,
-            workspace::load_saved_workspace,
-            // Updater
-            updater::download_and_update,
-            // Window control
-            window_ctrl::minimize_window,
-            window_ctrl::close_window,
-            window_ctrl::show_main_window,
+            ipc::x0a, ipc::x0b, ipc::x0c,
+            ipc::x1a, ipc::x1b,
+            ipc::x2a, ipc::x2b, ipc::x2c,
+            ipc::x3a, ipc::x3b, ipc::x3c, ipc::x3d, ipc::x3e, ipc::x3f,
+            ipc::x4a, ipc::x4b, ipc::x4c, ipc::x4d, ipc::x4e,
+            ipc::x5a, ipc::x5b, ipc::x5c, ipc::x5d,
+            ipc::x6a, ipc::x6b, ipc::x6c, ipc::x6d, ipc::x6e,
+            ipc::x7a, ipc::x7b, ipc::x7c, ipc::x7d, ipc::x7e, ipc::x7f, ipc::x7g,
+            ipc::x8a, ipc::x8b, ipc::x8c, ipc::x8d, ipc::x8e,
+            ipc::x9a, ipc::x9b,
+            ipc::xa1,
+            ipc::xb1, ipc::xb2,
+            ipc::xc1, ipc::xc2, ipc::xc3, ipc::xc4, ipc::xc5, ipc::xc6,
+            ipc::xc7, ipc::xc8, ipc::xc9, ipc::xca, ipc::xcb, ipc::xcc,
+            ipc::xd1, ipc::xd2,
+            ipc::xe1,
+            ipc::xf1, ipc::xf2, ipc::xf3,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

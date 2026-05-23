@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use super::utils;
 
 /// 下载更新文件并启动平台安装脚本
 #[tauri::command]
@@ -10,7 +11,7 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
     let current_exe = match env::current_exe() {
         Ok(p) => p,
         Err(e) => {
-            println!("[Updater] ERROR: current_exe failed: {}", e);
+            utils::dlog!("[Updater] ERROR: current_exe failed: {}", e);
             return serde_json::json!({
                 "success": false,
                 "message": format!("获取当前程序路径失败: {}", e)
@@ -18,8 +19,8 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
         }
     };
 
-    println!("[Updater] === download_and_update called === url={}, file={}, pid={}", url, file_name, pid);
-    println!("[Updater] current_exe={:?}", current_exe);
+    utils::dlog!("[Updater] === download_and_update called === url={}, file={}, pid={}", url, file_name, pid);
+    utils::dlog!("[Updater] current_exe={:?}", current_exe);
 
     // 使用系统临时目录存放下载文件和脚本，不污染 exe 所在目录
     let temp_dir = env::temp_dir();
@@ -27,7 +28,7 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
     let script_path = temp_dir.join(format!("cursor-renewal-updater-{}", pid));
 
     // 下载文件 (超时5分钟，与 Go 版一致)
-    println!("[Updater] 下载文件到: {:?}", temp_file);
+    utils::dlog!("[Updater] 下载文件到: {:?}", temp_file);
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .build()
@@ -49,7 +50,7 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
     {
         Ok(r) => r,
         Err(e) => {
-            println!("[Updater] 下载请求失败: {}", e);
+            utils::dlog!("[Updater] 下载请求失败: {}", e);
             return serde_json::json!({
                 "success": false,
                 "message": format!("下载请求失败: {}", e)
@@ -67,7 +68,7 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
     let bytes = match response.bytes().await {
         Ok(b) => b,
         Err(e) => {
-            println!("[Updater] 读取下载内容失败: {}", e);
+            utils::dlog!("[Updater] 读取下载内容失败: {}", e);
             return serde_json::json!({
                 "success": false,
                 "message": format!("读取下载内容失败: {}", e)
@@ -75,11 +76,11 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
         }
     };
 
-    println!("[Updater] 下载完成, 大小: {} bytes", bytes.len());
+    utils::dlog!("[Updater] 下载完成, 大小: {} bytes", bytes.len());
 
     // 基本校验：下载文件不应太小（至少 100KB，防止下载到错误页面）
     if bytes.len() < 100_000 {
-        println!("[Updater] ERROR: 文件太小 {} bytes", bytes.len());
+        utils::dlog!("[Updater] ERROR: 文件太小 {} bytes", bytes.len());
         return serde_json::json!({
             "success": false,
             "message": format!("下载文件异常，大小仅 {} bytes，请检查下载链接是否正确", bytes.len())
@@ -88,13 +89,13 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
 
     // 写入临时文件
     if let Err(e) = fs::write(&temp_file, &bytes) {
-        println!("[Updater] ERROR: 写入临时文件失败: {}", e);
+        utils::dlog!("[Updater] ERROR: 写入临时文件失败: {}", e);
         return serde_json::json!({
             "success": false,
             "message": format!("写入临时文件失败: {}", e)
         });
     }
-    println!("[Updater] 临时文件已写入: {:?}", temp_file);
+    utils::dlog!("[Updater] 临时文件已写入: {:?}", temp_file);
 
     // ========== Windows: PowerShell 安装脚本 (DETACHED_PROCESS) ==========
     #[cfg(target_os = "windows")]
@@ -170,13 +171,13 @@ try {{
         content_with_bom.extend_from_slice(bom);
         content_with_bom.extend_from_slice(ps_content.as_bytes());
         if let Err(e) = fs::write(&script_path, &content_with_bom) {
-            println!("[Updater] ERROR: 写入PS1脚本失败: {}", e);
+            utils::dlog!("[Updater] ERROR: 写入PS1脚本失败: {}", e);
             return serde_json::json!({
                 "success": false,
                 "message": format!("写入更新脚本失败: {}", e)
             });
         }
-        println!("[Updater] PS1脚本已写入: {:?}", script_path);
+        utils::dlog!("[Updater] PS1脚本已写入: {:?}", script_path);
 
         // schtasks /TR 只需要短命令: powershell -File "path.ps1"
         let task_cmd = format!(
@@ -184,8 +185,8 @@ try {{
             script_path.to_string_lossy()
         );
 
-        println!("[Updater] task_name={}, task_cmd len={}", task_name, task_cmd.len());
-        println!("[Updater] task_cmd={}", task_cmd);
+        utils::dlog!("[Updater] task_name={}, task_cmd len={}", task_name, task_cmd.len());
+        utils::dlog!("[Updater] task_cmd={}", task_cmd);
 
         // 创建一次性计划任务
         let create_result = std::process::Command::new("schtasks")
@@ -205,7 +206,7 @@ try {{
             Ok(output) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                println!("[Updater] schtasks /Create status={}, stdout={}, stderr={}", output.status, stdout.trim(), stderr.trim());
+                utils::dlog!("[Updater] schtasks /Create status={}, stdout={}, stderr={}", output.status, stdout.trim(), stderr.trim());
                 if !output.status.success() {
                     let _ = fs::remove_file(&temp_file);
                     let _ = fs::remove_file(&script_path);
@@ -216,7 +217,7 @@ try {{
                 }
             }
             Err(e) => {
-                println!("[Updater] ERROR: schtasks命令执行失败: {}", e);
+                utils::dlog!("[Updater] ERROR: schtasks命令执行失败: {}", e);
                 let _ = fs::remove_file(&temp_file);
                 let _ = fs::remove_file(&script_path);
                 return serde_json::json!({
@@ -227,7 +228,7 @@ try {{
         }
 
         // 立即运行计划任务
-        println!("[Updater] 执行 schtasks /Run ...");
+        utils::dlog!("[Updater] 执行 schtasks /Run ...");
         let run_result = std::process::Command::new("schtasks")
             .args(&["/Run", "/TN", &task_name])
             .creation_flags(CREATE_NO_WINDOW)
@@ -237,15 +238,15 @@ try {{
             Ok(output) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                println!("[Updater] schtasks /Run status={}, stdout={}, stderr={}", output.status, stdout.trim(), stderr.trim());
-                println!("[Updater] 计划任务已启动，3秒后强制退出主程序");
+                utils::dlog!("[Updater] schtasks /Run status={}, stdout={}, stderr={}", output.status, stdout.trim(), stderr.trim());
+                utils::dlog!("[Updater] 计划任务已启动，3秒后强制退出主程序");
                 std::thread::spawn(|| {
                     std::thread::sleep(std::time::Duration::from_secs(3));
                     std::process::exit(0);
                 });
             }
             Err(e) => {
-                println!("[Updater] ERROR: schtasks /Run 失败: {}", e);
+                utils::dlog!("[Updater] ERROR: schtasks /Run 失败: {}", e);
                 let _ = std::process::Command::new("schtasks")
                     .args(&["/Delete", "/TN", &task_name, "/F"])
                     .creation_flags(CREATE_NO_WINDOW)
@@ -303,7 +304,7 @@ nohup "$TARGET_EXECUTABLE" >/dev/null 2>&1 &
         );
 
         if let Err(e) = fs::write(&script_path, &sh_content) {
-            println!("[Updater] 写入 shell 脚本失败: {}", e);
+            utils::dlog!("[Updater] 写入 shell 脚本失败: {}", e);
             return serde_json::json!({
                 "success": false,
                 "message": format!("写入更新脚本失败: {}", e)
@@ -316,16 +317,16 @@ nohup "$TARGET_EXECUTABLE" >/dev/null 2>&1 &
             let _ = fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755));
         }
 
-        println!("[Updater] 启动 shell 安装脚本: {:?}", script_path);
+        utils::dlog!("[Updater] 启动 shell 安装脚本: {:?}", script_path);
         match std::process::Command::new("sh")
             .arg(&script_path)
             .spawn()
         {
             Ok(_) => {
-                println!("[Updater] shell 安装脚本已启动，等待主程序退出后执行替换");
+                utils::dlog!("[Updater] shell 安装脚本已启动，等待主程序退出后执行替换");
             }
             Err(e) => {
-                println!("[Updater] 启动 shell 脚本失败: {}", e);
+                utils::dlog!("[Updater] 启动 shell 脚本失败: {}", e);
                 let _ = fs::remove_file(&temp_file);
                 let _ = fs::remove_file(&script_path);
                 return serde_json::json!({
