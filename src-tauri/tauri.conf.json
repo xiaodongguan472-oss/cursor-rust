@@ -1,0 +1,68 @@
+{
+  "build": {
+    "distDir": "../ui",
+    "devPath": "../ui",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "withGlobalTauri": true
+  },
+  "package": {
+    "productName": "续杯助手",
+    "version": "8.4.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "shell": {
+        "all": false,
+        "open": true
+      },
+      "dialog": {
+        "all": false,
+        "open": true
+      },
+      "window": {
+        "all": false,
+        "minimize": true,
+        "close": true,
+        "hide": true,
+        "show": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "targets": "all",
+      "identifier": "com.cursor-renewal.app",
+      "icon": [
+        "icons/icon.ico",
+        "icons/icon.png"
+      ],
+      "resources": [],
+      "windows": {
+        "certificateThumbprint": null,
+        "digestAlgorithm": "sha256",
+        "timestampUrl": ""
+      }
+    },
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self' https:",
+      "dangerousDisableAssetCspModification": true
+    },
+    "windows": [
+      {
+        "title": "续杯助手",
+        "width": 920,
+        "height": 680,
+        "minWidth": 920,
+        "minHeight": 680,
+        "resizable": false,
+        "maximizable": false,
+        "center": true,
+        "decorations": false,
+        "transparent": false,
+        "fullscreen": false,
+        "visible": false
+      }
+    ]
+  }
+}

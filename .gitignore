@@ -1,0 +1,37 @@
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+
+# Node / Frontend (ui目录里如果有)
+node_modules/
+dist/
+.cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.windsurf/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 构建产物（防止误传）
+*.exe
+*.dmg
+*.app
+*.msi
+*.deb
+*.AppImage
+
+# 日志
+*.log
+_updater.log
+
+# 临时文件
+*.tmp
+*.bak

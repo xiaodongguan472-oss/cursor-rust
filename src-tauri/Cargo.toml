@@ -1,0 +1,39 @@
+[package]
+name = "cursor-renewal"
+version = "8.4.0"
+description = "Cursor续杯助手 - Rust + Tauri"
+authors = ["developer"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1", features = [] }
+
+[dependencies]
+tauri = { version = "1", features = ["shell-open", "dialog-open", "window-minimize", "window-close", "window-hide", "window-show"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json", "native-tls"], default-features = false }
+rusqlite = { version = "0.31", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+rand = "0.8"
+hex = "0.4"
+dirs = "5"
+sysinfo = "0.30"
+base64 = "0.21"
+hmac = "0.12"
+chrono = { version = "0.4", features = ["serde"] }
+open = "5"
+machine-uid = "0.5"
+hostname = "0.4"
+mac_address = "1"
+regex = "1"
+md5 = "0.7"
+whoami = "1"
+urlencoding = "2"
+libc = "0.2"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
