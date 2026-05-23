@@ -49,6 +49,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ========== 前端 UI 反逆向混淆 ==========
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install obfuscator dependencies
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+
+      - name: Obfuscate UI (in-place)
+        run: node scripts/obfuscate.js --inplace
+        # 直接覆盖 ui/ 目录（CI runner 是临时环境）
+        # 控制流平坦化 + 字符串数组 + 标识符乱码 + 控制台静默 + selfDefending
+
+      # ========== Rust 编译 ==========
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -63,8 +79,7 @@ jobs:
       - name: Install macOS dependencies
         if: startsWith(matrix.os, 'macos')
         run: |
-          # Tauri 1.x 在 macOS 上需要 webkit2gtk-4.0 之类的，纯 cargo build 不需要
-          # 此处仅占位，如有需要再加
+          # Tauri 1.x 在 macOS 上 cargo build 自带依赖，无需额外安装
           echo "macOS environment ready"
 
       - name: Build release binary

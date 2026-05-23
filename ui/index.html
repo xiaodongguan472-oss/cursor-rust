@@ -10,6 +10,87 @@
 
   <title>Cursor续杯工具</title>
 
+  <!-- ============================================================ -->
+  <!-- 反逆向：禁用 DevTools / F12 / 右键 / 文本选择 / 拖拽 -->
+  <!-- ============================================================ -->
+  <script>
+    (function () {
+      'use strict';
+      // 1. 禁用右键菜单
+      document.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+        return false;
+      }, true);
+
+      // 2. 禁用 F12 / Ctrl+Shift+I / Ctrl+Shift+J / Ctrl+Shift+C / Ctrl+U
+      document.addEventListener('keydown', function (e) {
+        var k = (e.key || '').toLowerCase();
+        if (k === 'f12') { e.preventDefault(); return false; }
+        if (e.ctrlKey && e.shiftKey && (k === 'i' || k === 'j' || k === 'c')) {
+          e.preventDefault(); return false;
+        }
+        if (e.ctrlKey && k === 'u') { e.preventDefault(); return false; }
+        if (e.ctrlKey && k === 's') { e.preventDefault(); return false; }
+      }, true);
+
+      // 3. 禁用文本选择（防复制 UI 文字提取）
+      document.addEventListener('selectstart', function (e) {
+        var t = e.target;
+        var tag = (t && t.tagName || '').toLowerCase();
+        // 输入框/文本域允许选择
+        if (tag === 'input' || tag === 'textarea') return;
+        if (t && t.isContentEditable) return;
+        e.preventDefault();
+        return false;
+      }, true);
+
+      // 4. 禁用拖拽（防止把图片/文字直接拖出去）
+      document.addEventListener('dragstart', function (e) {
+        e.preventDefault();
+        return false;
+      }, true);
+
+      // 5. 禁用 copy（防 Ctrl+C 复制业务文字）
+      document.addEventListener('copy', function (e) {
+        var t = e.target;
+        var tag = (t && t.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea') return;
+        if (t && t.isContentEditable) return;
+        e.preventDefault();
+        return false;
+      }, true);
+
+      // 6. DevTools 检测（尺寸差法 - WebView2 在 DevTools 打开时窗口尺寸会变化）
+      var threshold = 160;
+      function detectDevTools() {
+        var w = window.outerWidth - window.innerWidth;
+        var h = window.outerHeight - window.innerHeight;
+        if (w > threshold || h > threshold) {
+          // 检测到 DevTools 打开 -> 标记 + 通知 Rust 后端
+          try {
+            if (window.__TAURI__) {
+              window.__TAURI__.window.appWindow.close();
+            }
+          } catch (_) {}
+          // 兜底：覆盖整个 body
+          document.body.innerHTML = '';
+          window.location.href = 'about:blank';
+        }
+      }
+      setInterval(detectDevTools, 1000);
+
+      // 7. 禁用 console（让攻击者打开 DevTools 也看不到 log）
+      try {
+        var noop = function () {};
+        ['log', 'info', 'warn', 'error', 'debug', 'trace', 'dir', 'table', 'group', 'groupEnd'].forEach(function (m) {
+          if (console && typeof console[m] === 'function') {
+            console[m] = noop;
+          }
+        });
+      } catch (_) {}
+    })();
+  </script>
+
   <!-- Tauri: 直接加载本地CSS -->
   <link rel="stylesheet" href="./element-plus.css">
   <!-- Electron → Tauri 桥接层 (使用 Tauri 运行时自动注入的 __TAURI__ 全局对象) -->

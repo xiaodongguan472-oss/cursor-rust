@@ -1,0 +1,13 @@
+{
+  "name": "cursor-renewal-ui-obfuscation",
+  "version": "1.0.0",
+  "description": "前端 UI 混淆工具（防克隆者抓取 UI 源码）",
+  "private": true,
+  "scripts": {
+    "obfuscate": "node scripts/obfuscate.js",
+    "obfuscate:check": "node scripts/obfuscate.js --check"
+  },
+  "devDependencies": {
+    "javascript-obfuscator": "^4.1.1"
+  }
+}

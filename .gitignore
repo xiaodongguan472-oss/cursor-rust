@@ -35,3 +35,13 @@ _updater.log
 # 临时文件
 *.tmp
 *.bak
+
+# 编译期自动生成的前端 stub（build.rs 产物，已废弃）
+ui-stub/
+
+# JavaScript Obfuscator 本地测试产物
+ui-obfuscated/
+
+# Node.js 依赖（CI 通过 npm install 重新生成）
+node_modules/
+
