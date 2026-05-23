@@ -47,11 +47,11 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # ========== 前端 UI 反逆向混淆 ==========
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
@@ -105,22 +105,8 @@ jobs:
           chmod +x "$dst"
           ls -la "$dst"
 
-      # ========== 上传 artifact（仅 tag 推送时上传，节省 GitHub 存储配额）==========
-      - name: Upload artifact (Windows)
-        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: src-tauri/target/${{ matrix.target }}/release/${{ matrix.output_name }}
-          retention-days: 7
-
-      - name: Upload artifact (macOS)
-        if: startsWith(matrix.os, 'macos') && startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: src-tauri/target/${{ matrix.target }}/release/${{ matrix.output_name }}
-          retention-days: 7
+      # 注：故意不上 actions/upload-artifact（GitHub Actions storage 有配额限制）
+      # Release 附件由下面的 softprops/action-gh-release 直接从 target/ 路径上传
 
       # ========== 推 tag 时自动创建 Release ==========
       - name: Create Release on tag push
