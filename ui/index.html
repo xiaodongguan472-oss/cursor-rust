@@ -6744,7 +6744,7 @@
           await this.initApp();
 
           // 内容加载完成后，由 Rust 移动到屏幕中心并显示窗口，避免启动空窗口闪烁
-          ipcRenderer.invoke('show-main-window');
+          ipcRenderer.invoke('xf3');
 
           // 初始化无感换号状态
 
@@ -6842,7 +6842,7 @@
 
             try {
 
-              await ipcRenderer.invoke('save-settings', {
+              await ipcRenderer.invoke('x0b', {
 
                 ...this.settings,
 
@@ -6888,7 +6888,7 @@
 
               try {
 
-                await ipcRenderer.invoke('quit-app');
+                await ipcRenderer.invoke('x0c');
 
               } catch (error) {
 
@@ -7186,7 +7186,7 @@
 
             try {
 
-              const currentSettings = await ipcRenderer.invoke('get-settings');
+              const currentSettings = await ipcRenderer.invoke('x0a');
 
               this.settings = { ...this.settings, ...currentSettings };
 
@@ -7214,7 +7214,7 @@
 
               // 获取Cursor安装路径和版本信息
 
-              const pathsResult = await ipcRenderer.invoke('get-cursor-paths');
+              const pathsResult = await ipcRenderer.invoke('x1a');
 
 
 
@@ -7270,7 +7270,7 @@
 
               console.log('正在从JSON文件加载卡密信息...');
 
-              const cardInfo = await ipcRenderer.invoke('load-card-info');
+              const cardInfo = await ipcRenderer.invoke('x7e');
 
 
 
@@ -7306,7 +7306,7 @@
 
                 // 验证卡密是否仍然有效
 
-                const verifyResult = await ipcRenderer.invoke('verify-card-only', cardInfo.cardCode);
+                const verifyResult = await ipcRenderer.invoke('x7b', cardInfo.cardCode);
 
 
 
@@ -7440,7 +7440,7 @@
 
 
 
-                const verifyResult = await ipcRenderer.invoke('verify-card-only', cachedCode);
+                const verifyResult = await ipcRenderer.invoke('x7b', cachedCode);
 
 
 
@@ -7536,7 +7536,7 @@
 
                   };
 
-                  await ipcRenderer.invoke('save-card-info', saveData);
+                  await ipcRenderer.invoke('x7d', saveData);
 
 
 
@@ -7738,7 +7738,7 @@
 
               // 获取Cursor安装路径
 
-              const pathsResult = await ipcRenderer.invoke('get-cursor-paths');
+              const pathsResult = await ipcRenderer.invoke('x1a');
 
 
 
@@ -7762,7 +7762,7 @@
 
               // 验证卡密
 
-              const verifyResult = await ipcRenderer.invoke('verify-card', this.cardCode);
+              const verifyResult = await ipcRenderer.invoke('x7a', this.cardCode);
 
 
 
@@ -7934,7 +7934,7 @@
 
               // 搜索所有用户目录中的Cursor数据库
 
-              const dbSearchResult = await ipcRenderer.invoke('find-all-cursor-databases');
+              const dbSearchResult = await ipcRenderer.invoke('x3a');
 
               
 
@@ -8018,7 +8018,7 @@
 
               try {
 
-                const isRunning = await ipcRenderer.invoke('check-cursor-running');
+                const isRunning = await ipcRenderer.invoke('x6a');
 
 
 
@@ -8034,7 +8034,7 @@
 
                   try {
 
-                    const saveResult = await ipcRenderer.invoke('save-current-workspace', selectedDatabase.path);
+                    const saveResult = await ipcRenderer.invoke('xd1', selectedDatabase.path);
 
                     if (saveResult.success) {
 
@@ -8064,7 +8064,7 @@
 
                   
 
-                  const closeResult = await ipcRenderer.invoke('force-close-cursor');
+                  const closeResult = await ipcRenderer.invoke('x6b');
 
                   if (closeResult.success) {
 
@@ -8162,7 +8162,7 @@
 
               try {
 
-                const logoutResult = await ipcRenderer.invoke('logout-current-cursor-account', selectedDatabase.path);
+                const logoutResult = await ipcRenderer.invoke('x3e', selectedDatabase.path);
 
                 if (logoutResult.success) {
 
@@ -8196,7 +8196,7 @@
 
               // 步骤4.1: 执行Python风格账号切换（包含机器ID重置和注册表修改）
 
-              const switchResult = await ipcRenderer.invoke('python-style-account-switch',
+              const switchResult = await ipcRenderer.invoke('x3f',
 
                 selectedDatabase.path,
 
@@ -8228,7 +8228,7 @@
 
               // 步骤4.2: 记录使用
 
-              await ipcRenderer.invoke('record-usage', this.cardCode);
+              await ipcRenderer.invoke('x7g', this.cardCode);
 
 
 
@@ -8258,7 +8258,7 @@
 
                   try {
 
-                    const loadResult = await ipcRenderer.invoke('load-saved-workspace', selectedDatabase.path);
+                    const loadResult = await ipcRenderer.invoke('xd2', selectedDatabase.path);
 
                     if (loadResult.success && loadResult.workspace) {
 
@@ -8280,7 +8280,7 @@
 
                 // 启动Cursor，如果有保存的工作区则使用
 
-                const launchResult = await ipcRenderer.invoke('launch-cursor', savedWorkspace);
+                const launchResult = await ipcRenderer.invoke('x6e', savedWorkspace);
 
 
 
@@ -8498,7 +8498,7 @@
 
             try {
 
-              await ipcRenderer.invoke('open-external-url', 'https://www.xxdlzs.top/');
+              await ipcRenderer.invoke('x4e', 'https://www.xxdlzs.top/');
 
             } catch (error) {
 
@@ -8516,7 +8516,7 @@
 
             try {
 
-              await ipcRenderer.invoke('open-external-url', 'https://pay.ldxp.cn/shop/xxdlzs');
+              await ipcRenderer.invoke('x4e', 'https://pay.ldxp.cn/shop/xxdlzs');
 
             } catch (error) {
 
@@ -8558,7 +8558,7 @@
 
 
 
-              const result = await ipcRenderer.invoke('disable-cursor-auto-update');
+              const result = await ipcRenderer.invoke('x9b');
 
 
 
@@ -8644,7 +8644,7 @@
 
             try {
 
-              const currentSettings = await ipcRenderer.invoke('get-settings');
+              const currentSettings = await ipcRenderer.invoke('x0a');
 
               this.settings = { ...this.settings, ...currentSettings };
 
@@ -8700,7 +8700,7 @@
 
               const selectedPath = await Promise.race([
 
-                ipcRenderer.invoke('open-folder-dialog'),
+                ipcRenderer.invoke('x4d'),
 
                 timeoutPromise
 
@@ -8794,7 +8794,7 @@
 
               // 保存设置到主进程
 
-              const result = await ipcRenderer.invoke('save-settings', settingsToSave);
+              const result = await ipcRenderer.invoke('x0b', settingsToSave);
 
 
 
@@ -8898,7 +8898,7 @@
 
               // 调用验证接口（不更新数据库）
 
-              const verifyResult = await ipcRenderer.invoke('verify-card-only', this.tempCardCode);
+              const verifyResult = await ipcRenderer.invoke('x7b', this.tempCardCode);
 
 
 
@@ -8974,7 +8974,7 @@
 
                 };
 
-                await ipcRenderer.invoke('save-card-info', saveData);
+                await ipcRenderer.invoke('x7d', saveData);
 
                 console.log('卡密信息已保存到JSON文件');
 
@@ -9190,7 +9190,7 @@
 
               // 清除JSON文件
 
-              await ipcRenderer.invoke('clear-card-info');
+              await ipcRenderer.invoke('x7f');
 
 
 
@@ -9252,7 +9252,7 @@
 
 
 
-              const permissionResult = await ipcRenderer.invoke('get-current-permissions');
+              const permissionResult = await ipcRenderer.invoke('x9a');
 
 
 
@@ -9324,7 +9324,7 @@
 
 
 
-              const result = await ipcRenderer.invoke('get-latest-notice');
+              const result = await ipcRenderer.invoke('x8a');
 
 
 
@@ -9434,7 +9434,7 @@
 
 
 
-              const result = await ipcRenderer.invoke('get-latest-popup');
+              const result = await ipcRenderer.invoke('x8c');
 
 
 
@@ -9556,7 +9556,7 @@
 
               // 从后端获取二维码图片路径
 
-              const result = await ipcRenderer.invoke('get-qrcode-image');
+              const result = await ipcRenderer.invoke('x8d');
 
 
 
@@ -9820,7 +9820,7 @@
 
               // 打开文件夹选择对话框
 
-              const searchPath = await ipcRenderer.invoke('open-folder-dialog');
+              const searchPath = await ipcRenderer.invoke('x4d');
 
               
 
@@ -9842,7 +9842,7 @@
 
               // 执行手动搜索
 
-              const searchResult = await ipcRenderer.invoke('manual-search-cursor-database', searchPath);
+              const searchResult = await ipcRenderer.invoke('x3b', searchPath);
 
               
 
@@ -9926,7 +9926,7 @@
 
             // 使用Electron的shell模块打开外部链接
 
-            ipcRenderer.invoke('open-external-url', 'https://www.yuque.com/dongxiao-f0zme/vx4792/azhei77f89wz4kqo?singleDoc#');
+            ipcRenderer.invoke('x4e', 'https://www.yuque.com/dongxiao-f0zme/vx4792/azhei77f89wz4kqo?singleDoc#');
 
             // 同时关闭提示框
 
@@ -9944,7 +9944,7 @@
 
               // 使用Electron的shell模块打开外部链接
 
-              ipcRenderer.invoke('open-external-url', 'https://www.yuque.com/dongxiao-f0zme/vx4792/qvzy74s9vpc9iggs?singleDoc#');
+              ipcRenderer.invoke('x4e', 'https://www.yuque.com/dongxiao-f0zme/vx4792/qvzy74s9vpc9iggs?singleDoc#');
 
               console.log('打开Cursor常见问题处理页面');
 
@@ -10042,7 +10042,7 @@
 
               console.log('检查地区限制突破开关状态...');
 
-              const result = await ipcRenderer.invoke('check-cursor-settings-status');
+              const result = await ipcRenderer.invoke('xb1');
 
               
 
@@ -10170,7 +10170,7 @@
 
               // 4. 调用后端更新settings.json为基础配置
 
-              const result = await ipcRenderer.invoke('update-cursor-settings', false);
+              const result = await ipcRenderer.invoke('xb2', false);
 
               
 
@@ -10204,7 +10204,7 @@
 
             try {
 
-              const result = await ipcRenderer.invoke('update-cursor-settings', enabled);
+              const result = await ipcRenderer.invoke('xb2', enabled);
 
               if (result.success) {
 
@@ -10290,7 +10290,7 @@
 
             try {
 
-              const patched = await ipcRenderer.invoke('check-ext-host-patched');
+              const patched = await ipcRenderer.invoke('xc3');
 
               this.ehPatched = !!patched;
 
@@ -10300,7 +10300,7 @@
 
               // 读取当前 active_token 对应的邮箱（从 DB 中读取）
 
-              const token = await ipcRenderer.invoke('read-active-token');
+              const token = await ipcRenderer.invoke('xc5');
 
               if (token) {
 
@@ -10338,13 +10338,13 @@
 
                 ElMessage.info('正在关闭激活无感换号...');
 
-                const result = await ipcRenderer.invoke('unpatch-ext-host');
+                const result = await ipcRenderer.invoke('xc2');
 
                 if (result.success) {
 
                   this.ehPatched = false;
 
-                  await ipcRenderer.invoke('clear-active-token');
+                  await ipcRenderer.invoke('xc6');
 
                   if (this.usageTimer) {
 
@@ -10374,7 +10374,7 @@
 
                 ElMessage.info('正在开启激活无感换号...');
 
-                const result = await ipcRenderer.invoke('patch-ext-host');
+                const result = await ipcRenderer.invoke('xc1');
 
                 if (result.success) {
 
@@ -10416,7 +10416,7 @@
 
               // 先读取当前 token
 
-              const token = await ipcRenderer.invoke('read-active-token');
+              const token = await ipcRenderer.invoke('xc5');
 
               if (!token) {
 
@@ -10432,7 +10432,7 @@
 
 
 
-              const result = await ipcRenderer.invoke('check-cursor-usage', token);
+              const result = await ipcRenderer.invoke('xc7', token);
 
               if (result && result.success !== false) {
 
@@ -10512,7 +10512,7 @@
 
             try {
 
-              const verifyResult = await ipcRenderer.invoke('verify-card-only', this.cardCode);
+              const verifyResult = await ipcRenderer.invoke('x7b', this.cardCode);
 
               if (verifyResult && verifyResult.success) {
 
@@ -10596,7 +10596,7 @@
 
             try {
 
-              const result = await ipcRenderer.invoke('toggle-auto-switch', newState, this.cardCode);
+              const result = await ipcRenderer.invoke('xcb', newState, this.cardCode);
 
               if (result && result.success) {
 
@@ -10648,7 +10648,7 @@
 
             try {
 
-              const result = await ipcRenderer.invoke('reset-machine-ids-standalone');
+              const result = await ipcRenderer.invoke('x2c');
 
               if (result && result.success) {
 
@@ -10762,7 +10762,7 @@
 
                 ElMessage.info('正在开启激活无感换号...');
 
-                const patchResult = await ipcRenderer.invoke('patch-ext-host');
+                const patchResult = await ipcRenderer.invoke('xc1');
 
                 if (patchResult.success) {
 
@@ -10796,7 +10796,7 @@
 
             try {
 
-              const searchResult = await ipcRenderer.invoke('find-all-cursor-databases');
+              const searchResult = await ipcRenderer.invoke('x3a');
 
               if (searchResult && searchResult.success && searchResult.databases && searchResult.databases.length > 0) {
 
@@ -10832,7 +10832,7 @@
 
             try {
 
-              const result = await ipcRenderer.invoke('one-click-switch', dbPath, this.cardCode);
+              const result = await ipcRenderer.invoke('xca', dbPath, this.cardCode);
 
 
 
@@ -10890,7 +10890,7 @@
 
               console.log('检查版本更新...');
 
-              const result = await ipcRenderer.invoke('get-latest-tool-version');
+              const result = await ipcRenderer.invoke('x8b');
 
               
 
@@ -10968,11 +10968,10 @@
 
               }
 
-              // 检查是否需要强制更新（调用 check-version-update 接口，后端控制 forceUpdate 字段）
+              // 检查强制更新
               try {
-                const versionCheck = await ipcRenderer.invoke('check-version-update');
-                console.log('[版本检查] check-version-update 返回:', versionCheck);
-                if (versionCheck && versionCheck.success && versionCheck.data) {
+                const versionCheck = await ipcRenderer.invoke('x8e');
+                                if (versionCheck && versionCheck.success && versionCheck.data) {
                   const { needUpdate, forceUpdate, updateMessage } = versionCheck.data;
                   if (needUpdate && forceUpdate) {
                     console.log('[版本检查] 需要强制更新！');
@@ -11117,7 +11116,7 @@
 
               const downloadPageUrl = 'https://wwqb.lanzn.com/b01398mo2b';
 
-              await ipcRenderer.invoke('open-external-url', downloadPageUrl);
+              await ipcRenderer.invoke('x4e', downloadPageUrl);
 
               ElMessage.success('已打开下载页面');
 
@@ -11137,7 +11136,7 @@
           async downloadNewVersion() {
             try {
               if (this.latestVersionInfo && this.latestVersionInfo.download_url) {
-                await ipcRenderer.invoke('open-external-url', this.latestVersionInfo.download_url);
+                await ipcRenderer.invoke('x4e', this.latestVersionInfo.download_url);
                 ElMessage.success('已打开下载链接，请下载最新版本');
               } else {
                 ElMessage.error('下载链接不可用');
@@ -11166,7 +11165,7 @@
                 }
               }, 500);
 
-              const result = await ipcRenderer.invoke('download-and-update', this.latestVersionInfo.download_url, this.latestVersionInfo.file_name || 'update.exe');
+              const result = await ipcRenderer.invoke('xe1', this.latestVersionInfo.download_url, this.latestVersionInfo.file_name || 'update.exe');
 
               clearInterval(progressTimer);
 
@@ -11175,7 +11174,7 @@
                 ElMessage.success('更新文件下载完成，程序即将重启更新');
                 // 等待1.5秒后关闭程序，让批处理脚本完成替换
                 setTimeout(() => {
-                  ipcRenderer.send('close-window');
+                  ipcRenderer.send('xf2');
                 }, 1500);
               } else {
                 this.updateProgress = { downloading: false, percent: 0, status: '' };
@@ -11322,7 +11321,7 @@
 
       const { ipcRenderer } = require('electron');
 
-      ipcRenderer.send('minimize-window');
+      ipcRenderer.send('xf1');
 
     }
 
@@ -11332,7 +11331,7 @@
 
       const { ipcRenderer } = require('electron');
 
-      ipcRenderer.send('close-window');
+      ipcRenderer.send('xf2');
 
     }
 
