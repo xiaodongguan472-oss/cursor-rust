@@ -1,6 +1,6 @@
 [package]
 name = "cursor-renewal"
-version = "8.4.0"
+version = "8.5.0"
 description = "Cursor续杯助手 - Rust + Tauri"
 authors = ["developer"]
 edition = "2021"
@@ -33,7 +33,25 @@ md5 = "0.7"
 whoami = "1"
 urlencoding = "2"
 libc = "0.2"
+# === 反逆向 / 字符串混淆 ===
+obfstr = "0.4"
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+# === Release 最强优化 + 反逆向 ===
+[profile.release]
+opt-level = 3            # 性能最优（"z" 体积最小但损性能；3 适合桌面应用）
+lto = "fat"              # 跨 crate 完整 LTO，函数全部内联混淆
+codegen-units = 1        # 单代码生成单元，最大化 LTO 效果
+strip = "symbols"        # 移除所有符号表（函数名、变量名）
+panic = "abort"          # 移除 unwind 表，减少逆向线索 + 减小体积
+overflow-checks = false  # 关闭溢出检查（性能 + 减少 panic 代码）
+debug = false            # 不生成 debug info
+incremental = false      # 禁用增量编译（确保完整 LTO）
+
+# Dev 保持快速编译
+[profile.dev]
+opt-level = 0
+debug = true

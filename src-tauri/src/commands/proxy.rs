@@ -41,7 +41,8 @@ fn find_cursor_settings_path() -> Option<PathBuf> {
 }
 
 async fn fetch_current_proxy_config() -> Option<serde_json::Value> {
-    let api_url = "https://www.xxdlzs.top/hou/csk/proxy-config/current";
+    let api_url_owned = utils::api_url("/hou/csk/proxy-config/current");
+    let api_url = api_url_owned.as_str();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build().ok()?;
@@ -98,7 +99,8 @@ pub async fn check_cursor_settings_status() -> serde_json::Value {
     let current_proxy = settings["http.proxy"].as_str().unwrap_or("").to_string();
 
     // Check against database proxy list
-    let api_url = "https://www.xxdlzs.top/hou/csk/proxy-config/proxy-urls";
+    let api_url_owned = utils::api_url("/hou/csk/proxy-config/proxy-urls");
+    let api_url = api_url_owned.as_str();
     match utils::http_get_json(api_url).await {
         Ok(resp) => {
             let success = resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);

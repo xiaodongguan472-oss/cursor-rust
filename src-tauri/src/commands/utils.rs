@@ -1,6 +1,30 @@
 use std::path::PathBuf;
 use std::env;
 
+// ============================================================================
+// 反逆向：API URL 混淆助手
+// 所有调用方都通过 api_base() / api_url(path) 拼接，硬编码字面量被 obfstr 加密
+// ============================================================================
+
+/// 返回 API 服务器根地址（编译期 XOR 加密，运行时解密）
+#[inline(always)]
+pub fn api_base() -> String {
+    // obfstr! 宏在编译期将字符串以随机 key XOR 加密，反编译看不到明文
+    obfstr::obfstr!("https://www.xxdlzs.top").to_string()
+}
+
+/// 拼接 API URL：api_url("/hou/csk/card/verify") => "https://www.xxdlzs.top/hou/csk/card/verify"
+#[inline(always)]
+pub fn api_url(path: &str) -> String {
+    let mut url = api_base();
+    if !path.starts_with('/') {
+        url.push('/');
+    }
+    url.push_str(path);
+    url
+}
+
+
 /// Get the Cursor data directory based on the operating system
 pub fn get_cursor_data_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]

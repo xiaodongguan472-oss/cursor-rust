@@ -15,3 +15,4 @@ pub mod workspace;
 pub mod window_ctrl;
 pub mod utils;
 pub mod updater;
+pub mod anti_debug;

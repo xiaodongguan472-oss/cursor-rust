@@ -577,7 +577,8 @@ pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json:
         "deviceId": device_id
     });
 
-    let api_url = "https://www.xxdlzs.top/hou/csk/card/renew";
+    let api_url_owned = utils::api_url("/hou/csk/card/renew");
+    let api_url = api_url_owned.as_str();
     let resp = match utils::http_post_json(api_url, &body).await {
         Ok(r) => r,
         Err(e) => {
@@ -623,7 +624,8 @@ async fn fetch_new_account_with_retry(
     card_code: &str,
 ) -> Result<(String, String), String> {
     let device_id = utils::generate_stable_machine_id();
-    let api_url = "https://www.xxdlzs.top/hou/csk/card/renew";
+    let api_url_owned = utils::api_url("/hou/csk/card/renew");
+    let api_url = api_url_owned.as_str();
     let max_retries = 3;
 
     for retry in 0..=max_retries {

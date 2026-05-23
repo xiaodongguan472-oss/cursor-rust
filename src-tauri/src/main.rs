@@ -5,6 +5,9 @@ mod commands;
 use commands::*;
 
 fn main() {
+    // 反逆向：拒绝调试器附加 + 后台监控（必须在 tauri 启动前）
+    commands::anti_debug::init();
+
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             // Settings
