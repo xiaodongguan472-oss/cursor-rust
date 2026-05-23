@@ -14,18 +14,46 @@ macro_rules! dlog {
 pub(crate) use dlog;
 
 // ============================================================================
-// 反逆向：API URL 混淆助手
-// 所有调用方都通过 api_base() / api_url(path) 拼接，硬编码字面量被 obfstr 加密
+// 反逆向：API URL 多层加密
+// 密钥分散 + 非线性变换，macOS 无壳场景也无法被自动化提取
 // ============================================================================
 
-/// 返回 API 服务器根地址（编译期 XOR 加密，运行时解密）
-#[inline(always)]
-pub fn api_base() -> String {
-    // obfstr! 宏在编译期将字符串以随机 key XOR 加密，反编译看不到明文
-    obfstr::obfstr!("https://www.xxdlzs.top").to_string()
+// 密钥材料分散在不同常量中（编译后散布在 .rodata 不同位置）
+#[doc(hidden)] pub const _M0: u32 = 0x7A3F_1D9E;
+#[doc(hidden)] pub const _M1: u32 = 0x4B8C_E2A5;
+
+// 密文（非 XOR 模式，无法用 XOR 扫描器自动提取）
+const _CT: [u8; 22] = [
+    0x5A, 0x2F, 0xEE, 0x23, 0x34, 0x9A, 0xC4, 0x92,
+    0x89, 0xD0, 0xB2, 0x9F, 0xAB, 0x26, 0x82, 0x6E,
+    0x5D, 0xF9, 0xAD, 0xEF, 0xEC, 0xEF,
+];
+
+/// 多步派生解密（rotate + sub + XOR with derived sub-keys）
+#[inline(never)]
+fn _dk() -> [u8; 4] {
+    [
+        ((_M0 >> 24) as u8) ^ (_M1 as u8),
+        ((_M0 >> 16) as u8) ^ ((_M1 >> 8) as u8),
+        ((_M0 >> 8) as u8) ^ ((_M1 >> 16) as u8),
+        (_M0 as u8) ^ ((_M1 >> 24) as u8),
+    ]
 }
 
-/// 拼接 API URL：api_url("/hou/csk/card/verify") => "https://www.xxdlzs.top/hou/csk/card/verify"
+#[inline(always)]
+pub fn api_base() -> String {
+    let k = _dk();
+    let mut out = Vec::with_capacity(_CT.len());
+    for (i, &b) in _CT.iter().enumerate() {
+        let s1 = b.wrapping_sub(k[i % 4]);
+        let rot = (i % 5) + 1;
+        let s2 = (s1 >> rot) | (s1 << (8 - rot)); // u8 rotate_right
+        let s3 = s2 ^ k[(i + 3) % 4].wrapping_add(i as u8);
+        out.push(s3);
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
 #[inline(always)]
 pub fn api_url(path: &str) -> String {
     let mut url = api_base();
