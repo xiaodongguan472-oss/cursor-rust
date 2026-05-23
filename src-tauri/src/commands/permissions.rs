@@ -1,3 +1,4 @@
+#[cfg_attr(not(target_os = "windows"), allow(unused_imports))]
 use std::process::Command;
 use super::utils;
 

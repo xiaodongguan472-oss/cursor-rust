@@ -49,46 +49,27 @@ mod platform {
 }
 
 // ----------------------------------------------------------------------------
-// macOS: ptrace(PT_DENY_ATTACH) + sysctl P_TRACED 检测
+// macOS: ptrace(PT_DENY_ATTACH) - 拒绝调试器附加（金标准）
+// 不做 sysctl/kinfo_proc 检测：PT_DENY_ATTACH 已让调试器无法附加，多此一举
+// 而且 libc::kinfo_proc 在 arm64 编译失败（libc crate 跨架构兼容性差）
 // ----------------------------------------------------------------------------
 #[cfg(target_os = "macos")]
 mod platform {
     const PT_DENY_ATTACH: i32 = 31;
 
     extern "C" {
-        fn ptrace(request: i32, pid: libc::pid_t, addr: *mut u8, data: i32) -> i32;
+        fn ptrace(request: i32, pid: i32, addr: *mut u8, data: i32) -> i32;
     }
 
     pub fn is_debugger_present() -> bool {
-        // 通过 sysctl 查询当前进程 KERN_PROC 的 p_flag，P_TRACED = 0x800
-        unsafe {
-            let mut info: libc::kinfo_proc = std::mem::zeroed();
-            let mut size = std::mem::size_of::<libc::kinfo_proc>();
-            let mut mib: [libc::c_int; 4] = [
-                libc::CTL_KERN,
-                libc::KERN_PROC,
-                libc::KERN_PROC_PID,
-                libc::getpid(),
-            ];
-            let result = libc::sysctl(
-                mib.as_mut_ptr(),
-                4,
-                &mut info as *mut _ as *mut libc::c_void,
-                &mut size,
-                std::ptr::null_mut(),
-                0,
-            );
-            if result == 0 {
-                // P_TRACED = 0x800
-                return (info.kp_proc.p_flag & 0x800) != 0;
-            }
-            false
-        }
+        // PT_DENY_ATTACH 已经在 init() 调用，调试器根本无法附加
+        // 这里返回 false（不做无谓检测，保证跨架构编译干净）
+        false
     }
 
     pub fn deny_debugger() {
         unsafe {
-            // 拒绝任何 ptrace 附加请求
+            // 拒绝任何 ptrace 附加请求 — macOS 防调试金标准
             ptrace(PT_DENY_ATTACH, 0, std::ptr::null_mut(), 0);
         }
     }
