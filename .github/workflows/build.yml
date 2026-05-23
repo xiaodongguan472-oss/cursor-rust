@@ -27,9 +27,9 @@ jobs:
             binary_name: 'cursor-renewal.exe'
             output_name: '续杯助手-windows-x64.exe'
 
-          # macOS Intel (x86_64)
+          # macOS Intel (x86_64) - 在 ARM64 runner 上交叉编译
           - label: 'macOS-Intel-x64'
-            os: 'macos-13'
+            os: 'macos-latest'
             target: 'x86_64-apple-darwin'
             artifact_name: 'cursor-renewal-mac-x64'
             binary_name: 'cursor-renewal'
