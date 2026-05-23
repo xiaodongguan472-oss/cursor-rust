@@ -170,7 +170,7 @@ pub async fn get_qrcode_image() -> serde_json::Value {
 #[tauri::command]
 pub async fn check_version_update() -> serde_json::Value {
     println!("[API] check_version_update 被调用");
-    let app_version = "7.1";
+    let app_version = env!("CARGO_PKG_VERSION");
     // 传递当前版本号，后端根据版本判断是否需要强制更新
     let api_url = format!(
         "{}{}{}",
