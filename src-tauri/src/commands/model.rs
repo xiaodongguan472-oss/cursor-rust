@@ -4,7 +4,7 @@ use super::utils;
 
 #[tauri::command]
 pub async fn set_cursor_default_model(model: Option<String>) -> serde_json::Value {
-    let model = model.unwrap_or_else(|| "claude-3.5-sonnet".to_string());
+    let model = model.unwrap_or_else(|| obfstr::obfstr!("claude-3.5-sonnet").to_string());
 
     let mut results = serde_json::json!({
         "settingsFile": { "attempted": false, "success": false, "path": "", "error": null },
@@ -38,18 +38,20 @@ pub async fn set_cursor_default_model(model: Option<String>) -> serde_json::Valu
             serde_json::json!({})
         };
 
-        let model_keys = [
-            "cursor.chat.defaultModel",
-            "cursor.general.defaultModel",
-            "cursor.defaultModel",
-            "chat.defaultModel",
-            "ai.defaultModel",
-            "workbench.chat.defaultModel",
+        // 模型 key 全部 obfstr 加密（防 .rdata 暴露 cursor.chat.defaultModel 等特征）
+        let suffix = obfstr::obfstr!(".defaultModel").to_string();
+        let model_keys: [String; 6] = [
+            format!("{}{}", obfstr::obfstr!("cursor.chat"), suffix),
+            format!("{}{}", obfstr::obfstr!("cursor.general"), suffix),
+            format!("{}{}", obfstr::obfstr!("cursor"), suffix),
+            format!("{}{}", obfstr::obfstr!("chat"), suffix),
+            format!("{}{}", obfstr::obfstr!("ai"), suffix),
+            format!("{}{}", obfstr::obfstr!("workbench.chat"), suffix),
         ];
 
         if let Some(obj) = cursor_settings.as_object_mut() {
             for key in &model_keys {
-                obj.insert(key.to_string(), serde_json::json!(model));
+                obj.insert(key.clone(), serde_json::json!(model));
             }
         }
 
@@ -98,28 +100,30 @@ pub async fn set_cursor_default_model(model: Option<String>) -> serde_json::Valu
                         .unwrap_or(false);
 
                     if table_exists {
-                        let model_keys = [
-                            "cursor.chat.defaultModel",
-                            "cursor.general.defaultModel",
-                            "cursor.defaultModel",
-                            "chat.defaultModel",
-                            "ai.defaultModel",
-                            "workbench.chat.defaultModel",
-                            "vscode.chat.defaultModel",
+                        // 模型 key 全部 obfstr 加密
+                        let suffix = obfstr::obfstr!(".defaultModel").to_string();
+                        let model_keys: [String; 7] = [
+                            format!("{}{}", obfstr::obfstr!("cursor.chat"), suffix),
+                            format!("{}{}", obfstr::obfstr!("cursor.general"), suffix),
+                            format!("{}{}", obfstr::obfstr!("cursor"), suffix),
+                            format!("{}{}", obfstr::obfstr!("chat"), suffix),
+                            format!("{}{}", obfstr::obfstr!("ai"), suffix),
+                            format!("{}{}", obfstr::obfstr!("workbench.chat"), suffix),
+                            format!("{}{}", obfstr::obfstr!("vscode.chat"), suffix),
                         ];
 
                         let mut updated = Vec::new();
                         for key in &model_keys {
                             let count: i64 = conn
-                                .query_row("SELECT COUNT(*) FROM ItemTable WHERE key = ?1", [key], |row| row.get(0))
+                                .query_row("SELECT COUNT(*) FROM ItemTable WHERE key = ?1", [key.as_str()], |row| row.get(0))
                                 .unwrap_or(0);
                             let result = if count > 0 {
-                                conn.execute("UPDATE ItemTable SET value = ?1 WHERE key = ?2", [&model, &key.to_string()])
+                                conn.execute("UPDATE ItemTable SET value = ?1 WHERE key = ?2", [model.as_str(), key.as_str()])
                             } else {
-                                conn.execute("INSERT INTO ItemTable (key, value) VALUES (?1, ?2)", [key, &model.as_str()])
+                                conn.execute("INSERT INTO ItemTable (key, value) VALUES (?1, ?2)", [key.as_str(), model.as_str()])
                             };
                             if result.is_ok() {
-                                updated.push(key.to_string());
+                                updated.push(key.clone());
                             }
                         }
 

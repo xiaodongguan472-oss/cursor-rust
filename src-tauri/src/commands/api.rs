@@ -3,7 +3,7 @@ use super::utils;
 #[tauri::command]
 pub async fn get_latest_notice() -> serde_json::Value {
     println!("[API] get_latest_notice 被调用");
-    let api_url = utils::api_url("/hou/csk/notice/latest");
+    let api_url = utils::api_url(obfstr::obfstr!("/hou/csk/notice/latest"));
     let api_url = api_url.as_str();
     match utils::http_get_json(api_url).await {
         Ok(result) => {
@@ -52,8 +52,9 @@ pub async fn get_latest_tool_version() -> serde_json::Value {
 
     // 优先使用新版 toolVersion 接口（带 description 字段）
     let new_api_url = format!(
-        "{}/csk/toolVersion/latest?systemType={}",
+        "{}{}{}",
         utils::api_base(),
+        obfstr::obfstr!("/csk/toolVersion/latest?systemType="),
         system_type
     );
 
@@ -79,8 +80,9 @@ pub async fn get_latest_tool_version() -> serde_json::Value {
 
     // 回退到旧接口
     let old_api_url = format!(
-        "{}/hou/csk/download/latest-tool?systemType={}",
+        "{}{}{}",
         utils::api_base(),
+        obfstr::obfstr!("/hou/csk/download/latest-tool?systemType="),
         system_type
     );
 
@@ -111,7 +113,7 @@ pub async fn get_latest_tool_version() -> serde_json::Value {
 #[tauri::command]
 pub async fn get_latest_popup() -> serde_json::Value {
     println!("[API] get_latest_popup 被调用");
-    let api_url = utils::api_url("/hou/csk/popup/latest");
+    let api_url = utils::api_url(obfstr::obfstr!("/hou/csk/popup/latest"));
     let api_url = api_url.as_str();
     match utils::http_get_json(api_url).await {
         Ok(result) => {
@@ -135,7 +137,7 @@ pub async fn get_latest_popup() -> serde_json::Value {
 
 #[tauri::command]
 pub async fn get_qrcode_image() -> serde_json::Value {
-    let api_url = utils::api_url("/hou/csk/image/latest");
+    let api_url = utils::api_url(obfstr::obfstr!("/hou/csk/image/latest"));
     let api_url = api_url.as_str();
     match utils::http_get_json(api_url).await {
         Ok(result) => {
@@ -145,7 +147,7 @@ pub async fn get_qrcode_image() -> serde_json::Value {
                     if let Some(image_path) = data.get("imagePath").and_then(|v| v.as_str()) {
                         return serde_json::json!({
                             "success": true,
-                            "imagePath": format!("{}/hou/csk/{}", utils::api_base(), image_path),
+                            "imagePath": format!("{}{}{}", utils::api_base(), obfstr::obfstr!("/hou/csk/"), image_path),
                             "message": "获取二维码成功"
                         });
                     }
@@ -171,8 +173,9 @@ pub async fn check_version_update() -> serde_json::Value {
     let app_version = "7.1";
     // 传递当前版本号，后端根据版本判断是否需要强制更新
     let api_url = format!(
-        "{}/hou/csk/version/check?version={}",
+        "{}{}{}",
         utils::api_base(),
+        obfstr::obfstr!("/hou/csk/version/check?version="),
         app_version
     );
 

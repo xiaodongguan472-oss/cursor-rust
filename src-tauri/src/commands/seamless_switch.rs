@@ -439,12 +439,20 @@ async fn do_seamless_switch(
         hex::encode(hasher.finalize())
     };
 
+    // SQLite 字段名 obfstr 加密：反编译看 .rdata 看不到 cursorAuth/* / telemetry.* 明文
+    let key_access = utils::keys::auth_access();
+    let key_refresh = utils::keys::auth_refresh();
+    let key_email = utils::keys::auth_email();
+    let key_signup = utils::keys::auth_signup();
+    let key_machine = utils::keys::telem_machine();
+    let auth0_value = utils::keys::auth0_value();
+
     let updates: [(&str, &str); 5] = [
-        ("cursorAuth/accessToken", access_token),
-        ("cursorAuth/refreshToken", refresh_token),
-        ("cursorAuth/cachedEmail", email),
-        ("cursorAuth/cachedSignUpType", "Auth_0"),
-        ("telemetry.machineId", &new_machine_id),
+        (key_access.as_str(), access_token),
+        (key_refresh.as_str(), refresh_token),
+        (key_email.as_str(), email),
+        (key_signup.as_str(), &auth0_value),
+        (key_machine.as_str(), &new_machine_id),
     ];
 
     let mut updated_keys = Vec::new();
@@ -577,7 +585,7 @@ pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json:
         "deviceId": device_id
     });
 
-    let api_url_owned = utils::api_url("/hou/csk/card/renew");
+    let api_url_owned = utils::api_url(obfstr::obfstr!("/hou/csk/card/renew"));
     let api_url = api_url_owned.as_str();
     let resp = match utils::http_post_json(api_url, &body).await {
         Ok(r) => r,
@@ -624,7 +632,7 @@ async fn fetch_new_account_with_retry(
     card_code: &str,
 ) -> Result<(String, String), String> {
     let device_id = utils::generate_stable_machine_id();
-    let api_url_owned = utils::api_url("/hou/csk/card/renew");
+    let api_url_owned = utils::api_url(obfstr::obfstr!("/hou/csk/card/renew"));
     let api_url = api_url_owned.as_str();
     let max_retries = 3;
 

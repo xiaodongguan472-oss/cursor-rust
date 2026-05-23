@@ -82,10 +82,10 @@ fn reset_storage_machine_ids() -> ResetResult {
             .map_err(|e| format!("解析storage.json失败: {}", e))?;
 
         if let Some(obj) = config.as_object_mut() {
-            obj.insert("telemetry.machineId".to_string(), serde_json::json!(machine_id));
-            obj.insert("telemetry.macMachineId".to_string(), serde_json::json!(mac_machine_id));
-            obj.insert("telemetry.devDeviceId".to_string(), serde_json::json!(dev_device_id));
-            obj.insert("telemetry.sqmId".to_string(), serde_json::json!(sqm_id));
+            obj.insert(utils::keys::telem_machine(), serde_json::json!(machine_id));
+            obj.insert(utils::keys::telem_mac(), serde_json::json!(mac_machine_id));
+            obj.insert(utils::keys::telem_dev(), serde_json::json!(dev_device_id));
+            obj.insert(utils::keys::telem_sqm(), serde_json::json!(sqm_id));
         }
 
         let updated = serde_json::to_string_pretty(&config)
@@ -96,16 +96,18 @@ fn reset_storage_machine_ids() -> ResetResult {
     });
 
     match result {
-        Ok(()) => ResetResult {
-            success: true,
-            message: Some("storage.json机器码重置成功".to_string()),
-            error: None,
-            new_ids: Some(serde_json::json!({
-                "telemetry.machineId": machine_id,
-                "telemetry.macMachineId": mac_machine_id,
-                "telemetry.devDeviceId": dev_device_id,
-                "telemetry.sqmId": sqm_id,
-            })),
+        Ok(()) => {
+            let mut new_ids = serde_json::Map::new();
+            new_ids.insert(utils::keys::telem_machine(), serde_json::json!(machine_id));
+            new_ids.insert(utils::keys::telem_mac(), serde_json::json!(mac_machine_id));
+            new_ids.insert(utils::keys::telem_dev(), serde_json::json!(dev_device_id));
+            new_ids.insert(utils::keys::telem_sqm(), serde_json::json!(sqm_id));
+            ResetResult {
+                success: true,
+                message: Some("storage.json机器码重置成功".to_string()),
+                error: None,
+                new_ids: Some(serde_json::Value::Object(new_ids)),
+            }
         },
         Err(e) => ResetResult {
             success: false,

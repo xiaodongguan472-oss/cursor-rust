@@ -25,6 +25,35 @@ pub fn api_url(path: &str) -> String {
     url
 }
 
+// ============================================================================
+// 反逆向：SQLite/Storage 字段名混淆助手
+// 所有 cursorAuth/* / telemetry.* / cursorai/* 等敏感 key 都通过函数调用拼接
+// 反编译看 .rdata 节区只能看到加密字节序列，看不到任何明文
+// ============================================================================
+pub mod keys {
+    use obfstr::obfstr;
+    // === cursorAuth/* ===
+    #[inline(always)] pub fn auth_email() -> String { format!("{}{}", obfstr!("cursorAuth/"), obfstr!("cachedEmail")) }
+    #[inline(always)] pub fn auth_access() -> String { format!("{}{}", obfstr!("cursorAuth/"), obfstr!("accessToken")) }
+    #[inline(always)] pub fn auth_refresh() -> String { format!("{}{}", obfstr!("cursorAuth/"), obfstr!("refreshToken")) }
+    #[inline(always)] pub fn auth_signup() -> String { format!("{}{}", obfstr!("cursorAuth/"), obfstr!("cachedSignUpType")) }
+    #[inline(always)] pub fn auth_stripe() -> String { format!("{}{}", obfstr!("cursorAuth/"), obfstr!("stripeMembershipType")) }
+    // === cursorai/* ===
+    #[inline(always)] pub fn ai_server_config() -> String { format!("{}{}", obfstr!("cursorai/"), obfstr!("serverConfig")) }
+    #[inline(always)] pub fn ai_feature_status() -> String { format!("{}{}", obfstr!("cursorai/"), obfstr!("featureStatusCache")) }
+    #[inline(always)] pub fn ai_feature_config() -> String { format!("{}{}", obfstr!("cursorai/"), obfstr!("featureConfigCache")) }
+    // === telemetry.* ===
+    #[inline(always)] pub fn telem_machine() -> String { format!("{}{}", obfstr!("telemetry."), obfstr!("machineId")) }
+    #[inline(always)] pub fn telem_mac() -> String { format!("{}{}", obfstr!("telemetry."), obfstr!("macMachineId")) }
+    #[inline(always)] pub fn telem_dev() -> String { format!("{}{}", obfstr!("telemetry."), obfstr!("devDeviceId")) }
+    #[inline(always)] pub fn telem_sqm() -> String { format!("{}{}", obfstr!("telemetry."), obfstr!("sqmId")) }
+    // === auth/ + 杂项 ===
+    #[inline(always)] pub fn auth_user() -> String { format!("{}{}", obfstr!("auth/"), obfstr!("user")) }
+    #[inline(always)] pub fn auth_session() -> String { format!("{}{}", obfstr!("auth/"), obfstr!("session")) }
+    #[inline(always)] pub fn vscode_chat_token() -> String { format!("{}{}", obfstr!("vscode.chat."), obfstr!("access-token")) }
+    #[inline(always)] pub fn auth0_value() -> String { obfstr!("Auth_0").to_string() }
+}
+
 
 /// Get the Cursor data directory based on the operating system
 pub fn get_cursor_data_dir() -> Option<PathBuf> {

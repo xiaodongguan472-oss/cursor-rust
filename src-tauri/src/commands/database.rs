@@ -390,19 +390,27 @@ pub async fn update_cursor_auth(
         }
     };
 
-    // Delete serverConfig
-    let _ = conn.execute("DELETE FROM ItemTable WHERE key = 'cursorai/serverConfig'", []);
+    // Delete serverConfig (key 通过 obfstr 函数拼接，反编译看不到明文)
+    let server_config_key = utils::keys::ai_server_config();
+    let _ = conn.execute("DELETE FROM ItemTable WHERE key = ?1", [&server_config_key]);
 
-    let mut updates = Vec::new();
+    // 准备所有 SQLite key
+    let k_email = utils::keys::auth_email();
+    let k_access = utils::keys::auth_access();
+    let k_refresh = utils::keys::auth_refresh();
+    let k_signup = utils::keys::auth_signup();
+    let auth0 = utils::keys::auth0_value();
+
+    let mut updates: Vec<(&str, String)> = Vec::new();
     if !email.is_empty() {
-        updates.push(("cursorAuth/cachedEmail", email.clone()));
+        updates.push((k_email.as_str(), email.clone()));
     }
     if !access_token.is_empty() {
-        updates.push(("cursorAuth/accessToken", access_token.clone()));
+        updates.push((k_access.as_str(), access_token.clone()));
     }
     if !refresh_token.is_empty() {
-        updates.push(("cursorAuth/refreshToken", refresh_token.clone()));
-        updates.push(("cursorAuth/cachedSignUpType", "Auth_0".to_string()));
+        updates.push((k_refresh.as_str(), refresh_token.clone()));
+        updates.push((k_signup.as_str(), auth0.clone()));
     }
 
     let mut updated_keys = Vec::new();
@@ -447,18 +455,19 @@ pub async fn logout_current_cursor_account(db_path: String) -> DbUpdateResult {
         }
     };
 
-    let keys_to_delete = [
-        "cursorAuth/cachedEmail",
-        "cursorAuth/accessToken",
-        "cursorAuth/refreshToken",
-        "cursorAuth/cachedSignUpType",
-        "cursorai/featureStatusCache",
-        "cursorai/featureConfigCache",
-        "cursorAuth/stripeMembershipType",
-        "cursorai/serverConfig",
-        "auth/user",
-        "auth/session",
-        "vscode.chat.access-token",
+    // 通过 obfstr 函数拼接所有要删除的 key（反编译看不到明文）
+    let keys_to_delete: [String; 11] = [
+        utils::keys::auth_email(),
+        utils::keys::auth_access(),
+        utils::keys::auth_refresh(),
+        utils::keys::auth_signup(),
+        utils::keys::ai_feature_status(),
+        utils::keys::ai_feature_config(),
+        utils::keys::auth_stripe(),
+        utils::keys::ai_server_config(),
+        utils::keys::auth_user(),
+        utils::keys::auth_session(),
+        utils::keys::vscode_chat_token(),
     ];
 
     let mut deleted = Vec::new();
@@ -547,11 +556,16 @@ pub async fn python_style_account_switch(
         };
     }
 
-    let updates = vec![
-        ("cursorAuth/cachedEmail", email.as_str()),
-        ("cursorAuth/accessToken", access_token.as_str()),
-        ("cursorAuth/refreshToken", refresh_token.as_str()),
-        ("cursorAuth/cachedSignUpType", "Auth_0"),
+    let k_email = utils::keys::auth_email();
+    let k_access = utils::keys::auth_access();
+    let k_refresh = utils::keys::auth_refresh();
+    let k_signup = utils::keys::auth_signup();
+    let auth0 = utils::keys::auth0_value();
+    let updates: [(&str, &str); 4] = [
+        (k_email.as_str(), email.as_str()),
+        (k_access.as_str(), access_token.as_str()),
+        (k_refresh.as_str(), refresh_token.as_str()),
+        (k_signup.as_str(), auth0.as_str()),
     ];
 
     let mut updated_keys = Vec::new();

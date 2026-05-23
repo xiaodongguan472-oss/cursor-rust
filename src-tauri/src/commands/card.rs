@@ -121,7 +121,7 @@ async fn do_verify(card_code: &str, api_url: &str) -> CardVerifyResult {
 #[tauri::command]
 pub async fn verify_card_only(card_code: String) -> CardVerifyResult {
     let card_code = card_code.trim();
-    let verify_url = utils::api_url("/hou/csk/card/verify");
+    let verify_url = utils::api_url(obfstr::obfstr!("/hou/csk/card/verify"));
     let result = do_verify(card_code, &verify_url).await;
 
     // Save card info to file if successful
@@ -147,14 +147,14 @@ pub async fn verify_card_only(card_code: String) -> CardVerifyResult {
 #[tauri::command]
 pub async fn verify_card(card_code: String) -> CardVerifyResult {
     let card_code = card_code.trim();
-    let renew_url = utils::api_url("/hou/csk/card/renew");
+    let renew_url = utils::api_url(obfstr::obfstr!("/hou/csk/card/renew"));
     do_verify(card_code, &renew_url).await
 }
 
 #[tauri::command]
 pub async fn get_card_info(card_code: String) -> CardInfoResult {
     let card_code = card_code.trim();
-    let api_url = format!("{}/hou/csk/card/info/{}", utils::api_base(), card_code);
+    let api_url = format!("{}{}{}", utils::api_base(), obfstr::obfstr!("/hou/csk/card/info/"), card_code);
 
     match utils::http_get_json(&api_url).await {
         Ok(data) => {

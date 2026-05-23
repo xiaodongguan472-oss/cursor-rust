@@ -198,27 +198,34 @@ pub async fn modify_cursor_workbench(
     let mut modified = false;
 
     if is_valid {
-        // Enable pro
-        if let Ok(re) = regex::Regex::new(r"(isPro:function\(\)\{return )(.*?)(\})") {
+        // Enable pro: 正则 + 替换串都 obfstr 化（防 .rdata 暴露 Cursor 破解特征）
+        let pattern = obfstr::obfstr!(r"(isPro:function\(\)\{return )(.*?)(\})").to_string();
+        let replacement = obfstr::obfstr!("${1}true${3}").to_string();
+        if let Ok(re) = regex::Regex::new(&pattern) {
             if re.is_match(&new_content) {
-                new_content = re.replace_all(&new_content, "${1}true${3}").to_string();
+                new_content = re.replace_all(&new_content, replacement.as_str()).to_string();
                 modified = true;
             }
         }
-        // Set usage days
+        // Set usage days: 正则也 obfstr 加密
         if let Some(d) = days {
-            if let Ok(re) = regex::Regex::new(r"(getCursorTeamInfo:function\(\)\{return\{)([^}]*?)(\}\})") {
+            let team_pattern = obfstr::obfstr!(r"(getCursorTeamInfo:function\(\)\{return\{)([^}]*?)(\}\})").to_string();
+            let usage_days_key = obfstr::obfstr!("usageDays").to_string();
+            if let Ok(re) = regex::Regex::new(&team_pattern) {
                 if re.is_match(&new_content) {
-                    new_content = re.replace_all(&new_content, &format!("${{1}}usageDays:{}${{3}}", d)).to_string();
+                    let replacement = format!("${{1}}{}:{}${{3}}", usage_days_key, d);
+                    new_content = re.replace_all(&new_content, replacement.as_str()).to_string();
                     modified = true;
                 }
             }
         }
     } else {
-        // Disable pro
-        if let Ok(re) = regex::Regex::new(r"(isPro:function\(\)\{return )(.*?)(\})") {
+        // Disable pro: 正则 + 替换串都 obfstr 化
+        let pattern = obfstr::obfstr!(r"(isPro:function\(\)\{return )(.*?)(\})").to_string();
+        let replacement = obfstr::obfstr!("${1}false${3}").to_string();
+        if let Ok(re) = regex::Regex::new(&pattern) {
             if re.is_match(&new_content) {
-                new_content = re.replace_all(&new_content, "${1}false${3}").to_string();
+                new_content = re.replace_all(&new_content, replacement.as_str()).to_string();
                 modified = true;
             }
         }

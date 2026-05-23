@@ -41,7 +41,7 @@ fn find_cursor_settings_path() -> Option<PathBuf> {
 }
 
 async fn fetch_current_proxy_config() -> Option<serde_json::Value> {
-    let api_url_owned = utils::api_url("/hou/csk/proxy-config/current");
+    let api_url_owned = utils::api_url(obfstr::obfstr!("/hou/csk/proxy-config/current"));
     let api_url = api_url_owned.as_str();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -99,7 +99,7 @@ pub async fn check_cursor_settings_status() -> serde_json::Value {
     let current_proxy = settings["http.proxy"].as_str().unwrap_or("").to_string();
 
     // Check against database proxy list
-    let api_url_owned = utils::api_url("/hou/csk/proxy-config/proxy-urls");
+    let api_url_owned = utils::api_url(obfstr::obfstr!("/hou/csk/proxy-config/proxy-urls"));
     let api_url = api_url_owned.as_str();
     match utils::http_get_json(api_url).await {
         Ok(resp) => {
@@ -157,25 +157,15 @@ pub async fn update_cursor_settings(enabled: bool) -> serde_json::Value {
     }
 
     if enabled {
-        // Enable: fetch proxy config from backend
+        // Enable: fetch proxy config from backend (强制要求服务器返回，不再硬编码 fallback)
         let settings_content = match fetch_current_proxy_config().await {
             Some(config) => config,
             None => {
-                // Fallback default
-                serde_json::json!({
-                    "database-client.autoSync": true,
-                    "update.enableWindowsBackgroundUpdates": false,
-                    "update.mode": "none",
-                    "http.proxyAuthorization": null,
-                    "json.schemas": [],
-                    "window.commandCenter": true,
-                    "http.proxy": "socks5://xc999:xc123@154.201.91.204:38999",
-                    "http.systemCertificates": false,
-                    "http.proxySupport": "override",
-                    "http.experimental.systemCertificatesV2": false,
-                    "http.experimental.systemCertificates": false,
-                    "cursor.general.disableHttp2": true
-                })
+                return serde_json::json!({
+                    "success": false,
+                    "error": "无法获取代理配置",
+                    "message": "代理配置服务器暂不可用，请稍后重试或检查网络"
+                });
             }
         };
 
