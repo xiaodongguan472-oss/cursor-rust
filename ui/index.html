@@ -216,6 +216,20 @@
 
       position: relative;
 
+      -webkit-app-region: drag;
+
+    }
+
+    .header button,
+    .header div[style*="cursor: pointer"],
+    .header .header-help-button,
+    .header .header-settings-icon,
+    .header .permission-status,
+    .header .version,
+    .header a,
+    .header [onclick],
+    .header [onmouseover] {
+      -webkit-app-region: no-drag;
     }
 
     .app-icon {
