@@ -6788,6 +6788,22 @@
 
           await this.initApp();
 
+          // 窗口拖动：监听 custom-titlebar 和 header 的 mousedown 事件
+          this.$nextTick(() => {
+            const dragHandler = (e) => {
+              // 排除按钮等可交互元素
+              const clickable = e.target.closest('button, a, [onclick], .titlebar-button, .titlebar-controls, .header-help-button, .header-settings-icon, .permission-status, .version');
+              if (clickable) return;
+              if (window.__TAURI__ && window.__TAURI__.window) {
+                window.__TAURI__.window.appWindow.startDragging();
+              }
+            };
+            const titlebar = document.querySelector('.custom-titlebar');
+            if (titlebar) titlebar.addEventListener('mousedown', dragHandler);
+            const header = this.$el.querySelector('.header');
+            if (header) header.addEventListener('mousedown', dragHandler);
+          });
+
           // 内容加载完成后，由 Rust 移动到屏幕中心并显示窗口，避免启动空窗口闪烁
           ipcRenderer.invoke('xf3');
 
