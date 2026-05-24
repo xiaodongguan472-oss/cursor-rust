@@ -87,6 +87,30 @@ jobs:
         if: runner.os == 'macOS'
         run: npm install -g @tauri-apps/cli@^1
 
+      - name: Generate macOS icons (.icns)
+        if: runner.os == 'macOS'
+        run: |
+          cd src-tauri
+          # 用 tauri icon 从 PNG 生成所有格式（包含 .icns）
+          tauri icon icons/icon.png || true
+          # 如果 tauri icon 失败，用 sips+iconutil 手动生成
+          if [ ! -f icons/icon.icns ]; then
+            echo "Generating .icns manually..."
+            mkdir -p /tmp/icon.iconset
+            sips -z 16 16 icons/icon.png --out /tmp/icon.iconset/icon_16x16.png
+            sips -z 32 32 icons/icon.png --out /tmp/icon.iconset/icon_16x16@2x.png
+            sips -z 32 32 icons/icon.png --out /tmp/icon.iconset/icon_32x32.png
+            sips -z 64 64 icons/icon.png --out /tmp/icon.iconset/icon_32x32@2x.png
+            sips -z 128 128 icons/icon.png --out /tmp/icon.iconset/icon_128x128.png
+            sips -z 256 256 icons/icon.png --out /tmp/icon.iconset/icon_128x128@2x.png
+            sips -z 256 256 icons/icon.png --out /tmp/icon.iconset/icon_256x256.png
+            sips -z 512 512 icons/icon.png --out /tmp/icon.iconset/icon_256x256@2x.png
+            sips -z 512 512 icons/icon.png --out /tmp/icon.iconset/icon_512x512.png
+            cp icons/icon.png /tmp/icon.iconset/icon_512x512@2x.png
+            iconutil -c icns /tmp/icon.iconset -o icons/icon.icns
+          fi
+          ls -la icons/
+
       - name: Build macOS app bundle (.app + .dmg)
         if: runner.os == 'macOS'
         run: tauri build --target ${{ matrix.target }}
