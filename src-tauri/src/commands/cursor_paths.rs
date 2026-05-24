@@ -178,12 +178,24 @@ pub fn get_user_data_path() -> Result<String, String> {
         .ok_or_else(|| "无法确定Cursor用户数据路径".to_string())
 }
 
-/// Get cursor install path from base_path (removing resources/app)
+/// Get cursor install path from base_path (removing resources/app or Contents/Resources/app)
 pub fn get_cursor_install_from_base_path(base_path: &str) -> PathBuf {
     let p = Path::new(base_path);
-    // Go up from resources/app -> resources -> install_dir
-    p.parent()
-        .and_then(|p| p.parent())
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(base_path))
+    #[cfg(target_os = "macos")]
+    {
+        // macOS: Contents/Resources/app → 往上3层到 .app 根目录
+        p.parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(base_path))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Windows/Linux: resources/app → 往上2层
+        p.parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(base_path))
+    }
 }

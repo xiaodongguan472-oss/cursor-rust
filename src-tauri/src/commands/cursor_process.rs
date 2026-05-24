@@ -183,12 +183,7 @@ fn get_cursor_executable() -> Result<(String, String), String> {
     let exe = install_path.join("Cursor.exe");
 
     #[cfg(target_os = "macos")]
-    let exe = {
-        // Go up one more level from install_path to get .app path
-        install_path.parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or(install_path.clone())
-    };
+    let exe = install_path.clone(); // install_path 已经是 .app 路径
 
     #[cfg(target_os = "linux")]
     let exe = install_path.join("cursor");
