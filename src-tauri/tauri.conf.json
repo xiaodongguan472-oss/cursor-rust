@@ -26,7 +26,8 @@
         "minimize": true,
         "close": true,
         "hide": true,
-        "show": true
+        "show": true,
+        "startDragging": true
       }
     },
     "bundle": {

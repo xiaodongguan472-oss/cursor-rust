@@ -41,18 +41,18 @@ pub async fn get_current_permissions() -> serde_json::Value {
 
     let (level, description) = if is_admin {
         #[cfg(target_os = "windows")]
-        let r = ("administrator", "管理员权限");
+        let r = ("administrator", "管理员");
         #[cfg(target_os = "macos")]
         let r = if unsafe { libc::geteuid() } == 0 {
-            ("root", "Root权限")
+            ("root", "管理员")
         } else {
-            ("user_writable", "普通用户（具备Cursor目录写权限）")
+            ("administrator", "管理员")
         };
         #[cfg(target_os = "linux")]
-        let r = ("root", "Root权限");
+        let r = ("root", "管理员");
         r
     } else {
-        ("user", "普通用户权限")
+        ("user", "普通用户")
     };
 
     let username = whoami::username();
