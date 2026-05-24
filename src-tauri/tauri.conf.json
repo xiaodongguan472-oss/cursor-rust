@@ -39,6 +39,10 @@
         "icons/icon.png"
       ],
       "resources": [],
+      "macOS": {
+        "entitlements": "entitlements.mac.plist",
+        "signingIdentity": null
+      },
       "windows": {
         "certificateThumbprint": null,
         "digestAlgorithm": "sha256",

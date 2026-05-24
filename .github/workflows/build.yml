@@ -115,29 +115,31 @@ jobs:
         if: runner.os == 'macOS'
         run: tauri build --target ${{ matrix.target }}
 
-      - name: Prepare macOS DMG artifact
+      - name: Ad-hoc sign + create DMG
         if: runner.os == 'macOS'
         run: |
-          DMG_DIR="src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
-          echo "=== Bundle output ==="
-          ls -laR src-tauri/target/${{ matrix.target }}/release/bundle/ || true
-          DMG_FILE=$(ls "$DMG_DIR"/*.dmg 2>/dev/null | head -1)
-          if [ -n "$DMG_FILE" ]; then
-            cp "$DMG_FILE" "${{ matrix.output_name }}"
-            echo "DMG ready: $(ls -lh "${{ matrix.output_name }}")"
-          else
-            echo "WARNING: DMG not found, packaging .app as zip"
-            APP_DIR="src-tauri/target/${{ matrix.target }}/release/bundle/macos"
-            APP_FILE=$(ls -d "$APP_DIR"/*.app 2>/dev/null | head -1)
-            if [ -n "$APP_FILE" ]; then
-              ditto -c -k --sequesterRsrc --keepParent "$APP_FILE" "${{ matrix.output_name }}.zip"
-              mv "${{ matrix.output_name }}.zip" "${{ matrix.output_name }}"
-              echo "App zip ready: $(ls -lh "${{ matrix.output_name }}")"
-            else
-              echo "ERROR: No .app or .dmg found"
-              exit 1
-            fi
+          APP_DIR="src-tauri/target/${{ matrix.target }}/release/bundle/macos"
+          APP_FILE=$(ls -d "$APP_DIR"/*.app 2>/dev/null | head -1)
+          if [ -z "$APP_FILE" ]; then
+            echo "ERROR: No .app found in $APP_DIR"
+            ls -la "$APP_DIR" || true
+            exit 1
           fi
+
+          # 1. Ad-hoc 签名（让 macOS 显示"无法验证"而非"已损坏"）
+          echo "=== Ad-hoc signing: $APP_FILE ==="
+          codesign --force --deep --sign - "$APP_FILE"
+          codesign --verify "$APP_FILE" && echo "✓ Signature valid"
+
+          # 2. 创建 DMG（用签名后的 .app 重新制作）
+          APP_NAME=$(basename "$APP_FILE")
+          DMG_OUT="${{ matrix.output_name }}"
+          DMG_TMP="/tmp/dmg_staging"
+          rm -rf "$DMG_TMP" && mkdir -p "$DMG_TMP"
+          cp -R "$APP_FILE" "$DMG_TMP/"
+          ln -s /Applications "$DMG_TMP/Applications"
+          hdiutil create -volname "续杯助手" -srcfolder "$DMG_TMP" -ov -format UDZO "$DMG_OUT"
+          echo "✓ DMG ready: $(ls -lh "$DMG_OUT")"
 
       # ========== Release ==========
       - name: Create Release on tag push
