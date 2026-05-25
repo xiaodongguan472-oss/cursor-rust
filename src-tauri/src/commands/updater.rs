@@ -108,7 +108,6 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         let script_path = script_path.with_extension("ps1");
-        let log_path = current_exe.parent().unwrap_or_else(|| std::path::Path::new(".")).join("_updater.log");
         let task_name = format!("CursorUpdate_{}", pid);
 
         // 所有参数直接硬编码进脚本，避免 schtasks /TR 的 261 字符限制
@@ -117,56 +116,30 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
 $ArchivePath = '{archive}'
 $TargetExecutable = '{target}'
 $TaskName = '{task}'
-$LogFile = '{log_file}'
-
-function Log($msg) {{
-  $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-  "$ts $msg" | Out-File -FilePath $LogFile -Append -Encoding UTF8
-}}
 
 try {{
-  Log "=== Updater script started ==="
-  Log "PidToWait: $PidToWait"
-  Log "ArchivePath: $ArchivePath"
-  Log "TargetExecutable: $TargetExecutable"
-
   if (-not (Test-Path -LiteralPath $ArchivePath)) {{
-    Log "ERROR: ArchivePath not found!"
     exit 1
   }}
-  $sz = (Get-Item -LiteralPath $ArchivePath).Length
-  Log "Archive size: $sz bytes"
 
-  Log "Waiting for PID $PidToWait..."
-  $w = 0
   while (Get-Process -Id $PidToWait -ErrorAction SilentlyContinue) {{
     Start-Sleep -Seconds 1
-    $w++
   }}
-  Log "PID exited after $w seconds"
   Start-Sleep -Seconds 2
 
-  Log "Replacing exe..."
   Copy-Item -LiteralPath $ArchivePath -Destination $TargetExecutable -Force
-  Log "Copy done, new size: $((Get-Item $TargetExecutable).Length) bytes"
-
-  Log "Starting new version..."
   Start-Process -FilePath $TargetExecutable
-  Log "New version started"
 }} catch {{
-  Log "ERROR: $($_.Exception.Message)"
 }} finally {{
   Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction SilentlyContinue
   schtasks /Delete /TN $TaskName /F 2>$null
   Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
-  Log "Cleanup done."
 }}
 "#,
             pid = pid,
             archive = temp_file.to_string_lossy().replace('\'', "''"),
             target = current_exe.to_string_lossy().replace('\'', "''"),
             task = task_name,
-            log_file = log_path.to_string_lossy().replace('\'', "''"),
         );
 
         // 写入 PS1 脚本（加 UTF-8 BOM 头，确保 PowerShell 正确读取中文路径）

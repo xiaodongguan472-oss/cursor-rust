@@ -4421,21 +4421,14 @@
 
           <h1>Cursor续杯工具</h1>
 
-          <!-- 版本更新提示 - 红色感叹号，放在标题右上角 -->
-
-          <span v-if="hasNewVersion" @click="showVersionUpdateDialog"
-
-                style="position: absolute; top: 33px; right: 80px; width: 14px; height: 14px; background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; cursor: pointer; box-shadow: 0 2px 8px rgba(255, 68, 68, 0.6);"
-
-                title="发现新版本，点击查看">
-
-            !
-
-          </span>
-
-          <div class="version" @click="showVersionUpdateDialog" :style="{ display: 'flex', alignItems: 'center', gap: '6px', userSelect: 'none', color: hasNewVersion ? '#ff4444' : '', fontWeight: hasNewVersion ? 'bold' : '' }">
+          <div class="version" @click="showVersionUpdateDialog" :style="{ display: 'flex', alignItems: 'center', gap: '4px', userSelect: 'none', color: hasNewVersion ? '#ff4444' : '', fontWeight: hasNewVersion ? 'bold' : '' }">
 
             Version {{ currentVersion }}
+
+            <!-- 版本更新提示 - 红色感叹号，紧跟版本号后面 -->
+            <span v-if="hasNewVersion"
+                  style="width: 14px; height: 14px; background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%); color: white; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; cursor: pointer; box-shadow: 0 2px 8px rgba(255, 68, 68, 0.6); flex-shrink: 0;"
+                  title="发现新版本，点击查看">!</span>
 
           </div>
 
