@@ -1,5 +1,14 @@
 use super::utils;
 
+/// 格式化版本号：去掉末尾的 .0（如 9.0.0 -> 9.0, 9.1.0 -> 9.1）
+fn format_version(version: &str) -> String {
+    let mut v = version.to_string();
+    while v.ends_with(".0") && v.matches('.').count() > 1 {
+        v = v[..v.len() - 2].to_string();
+    }
+    v
+}
+
 #[tauri::command]
 pub async fn get_latest_notice() -> serde_json::Value {
     utils::dlog!("[API] get_latest_notice 被调用");
@@ -170,7 +179,9 @@ pub async fn get_qrcode_image() -> serde_json::Value {
 #[tauri::command]
 pub async fn check_version_update() -> serde_json::Value {
     utils::dlog!("[API] check_version_update 被调用");
-    let app_version = env!("CARGO_PKG_VERSION");
+    let raw_version = env!("CARGO_PKG_VERSION");
+    // 格式化版本号：9.0.0 -> 9.0（去掉末尾的 .0）
+    let app_version = format_version(raw_version);
     // 传递当前版本号，后端根据版本判断是否需要强制更新
     let api_url = format!(
         "{}{}{}",
