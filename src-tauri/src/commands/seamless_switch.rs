@@ -113,24 +113,23 @@ fn do_patch_ext_host(cursor_install_path: &Path) -> serde_json::Value {
     let inject_code = build_eh_inject_code();
     let new_content = format!("{}{}", inject_code, content);
 
-    let write_result = utils::safe_modify_file(&eh_path, || {
-        fs::write(&eh_path, &new_content).map_err(|e| format!("写入文件失败: {}", e))
-    });
+    // macOS Sonoma+ App Management TCC: 走 osascript 提权 + 副本重签 + 原子替换
+    let write_result = utils::write_file_in_app(&eh_path, &new_content);
 
     match write_result {
         Ok(()) => {
-            // macOS: 清除扩展属性（避免 Gatekeeper 拦截）+ ad-hoc 重签
+            // macOS 非提权场景兜底重签（提权路径下副本已重签）
             #[cfg(target_os = "macos")]
             {
-                let app_path = cursor_install_path.to_string_lossy();
-                // 1. 递归清除 quarantine、FinderInfo 等扩展属性
-                let _ = std::process::Command::new("xattr")
-                    .args(["-cr", &app_path])
-                    .output();
-                // 2. ad-hoc 重签
-                let _ = std::process::Command::new("codesign")
-                    .args(["--force", "--deep", "--sign", "-", &app_path])
-                    .output();
+                if !utils::mac_needs_privilege(&eh_path) {
+                    let app_path = cursor_install_path.to_string_lossy();
+                    let _ = std::process::Command::new("xattr")
+                        .args(["-cr", &app_path])
+                        .output();
+                    let _ = std::process::Command::new("codesign")
+                        .args(["--force", "--deep", "--sign", "-", &app_path])
+                        .output();
+                }
             }
 
             serde_json::json!({"success": true, "patched": true, "message": "补丁注入成功"})
@@ -173,21 +172,21 @@ fn do_unpatch_ext_host(cursor_install_path: &Path) -> serde_json::Value {
         content
     };
 
-    let write_result = utils::safe_modify_file(&eh_path, || {
-        fs::write(&eh_path, &new_content).map_err(|e| format!("写入失败: {}", e))
-    });
+    let write_result = utils::write_file_in_app(&eh_path, &new_content);
 
     match write_result {
         Ok(()) => {
             #[cfg(target_os = "macos")]
             {
-                let app_path = cursor_install_path.to_string_lossy();
-                let _ = std::process::Command::new("xattr")
-                    .args(["-cr", &app_path])
-                    .output();
-                let _ = std::process::Command::new("codesign")
-                    .args(["--force", "--deep", "--sign", "-", &app_path])
-                    .output();
+                if !utils::mac_needs_privilege(&eh_path) {
+                    let app_path = cursor_install_path.to_string_lossy();
+                    let _ = std::process::Command::new("xattr")
+                        .args(["-cr", &app_path])
+                        .output();
+                    let _ = std::process::Command::new("codesign")
+                        .args(["--force", "--deep", "--sign", "-", &app_path])
+                        .output();
+                }
             }
             serde_json::json!({"success": true, "patched": false, "message": "补丁已移除"})
         }

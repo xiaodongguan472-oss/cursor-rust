@@ -827,26 +827,28 @@ pub fn patch_workbench(base_path: &str) -> serde_json::Value {
     let inject_code = build_workbench_inject_code();
     let new_content = format!("{}\n{}", content, inject_code);
 
-    let write_result = utils::safe_modify_file(&wb_path, || {
-        fs::write(&wb_path, &new_content).map_err(|e| format!("写入文件失败: {}", e))
-    });
+    // macOS 上若 /Applications/Cursor.app 受 App Management TCC 保护，
+    // 走 osascript 提权 + 副本重签 + 原子替换；其他平台直接写。
+    let write_result = utils::write_file_in_app(&wb_path, &new_content);
 
     match write_result {
         Ok(()) => {
             // 清除 V8 字节码缓存
             clear_v8_cache();
 
-            // macOS: 重签名
+            // macOS: write_file_in_app 在提权路径下已重签，这里只做无提权场景的兜底重签
             #[cfg(target_os = "macos")]
             {
-                let install_path = cursor_paths::get_cursor_install_from_base_path(base_path);
-                let app_path = install_path.to_string_lossy();
-                let _ = std::process::Command::new("xattr")
-                    .args(["-cr", &*app_path])
-                    .output();
-                let _ = std::process::Command::new("codesign")
-                    .args(["--force", "--deep", "--sign", "-", &*app_path])
-                    .output();
+                if !utils::mac_needs_privilege(&wb_path) {
+                    let install_path = cursor_paths::get_cursor_install_from_base_path(base_path);
+                    let app_path = install_path.to_string_lossy();
+                    let _ = std::process::Command::new("xattr")
+                        .args(["-cr", &*app_path])
+                        .output();
+                    let _ = std::process::Command::new("codesign")
+                        .args(["--force", "--deep", "--sign", "-", &*app_path])
+                        .output();
+                }
             }
 
             serde_json::json!({"success": true, "message": "机器码注入成功"})
@@ -870,28 +872,36 @@ pub fn unpatch_workbench(base_path: &str) -> serde_json::Value {
         }
     };
 
-    if !content.contains(WB_PATCH_START) {
+    let has_end_block = content.contains(WB_PATCH_START);
+    let has_inline = content.contains("/*i1s*/");
+    if !has_end_block && !has_inline {
         return serde_json::json!({"success": true, "message": "未检测到注入"});
     }
 
-    let new_content = remove_patch_from_content(&content);
+    // 移除末尾注入块 + 内联注入点1
+    let mut new_content = if has_end_block {
+        remove_patch_from_content(&content)
+    } else {
+        content
+    };
+    new_content = remove_between(&new_content, "/*i1s*/", "/*i1e*/");
 
-    let write_result = utils::safe_modify_file(&wb_path, || {
-        fs::write(&wb_path, &new_content).map_err(|e| format!("写入失败: {}", e))
-    });
+    let write_result = utils::write_file_in_app(&wb_path, &new_content);
 
     match write_result {
         Ok(()) => {
             #[cfg(target_os = "macos")]
             {
-                let install_path = cursor_paths::get_cursor_install_from_base_path(base_path);
-                let app_path = install_path.to_string_lossy();
-                let _ = std::process::Command::new("xattr")
-                    .args(["-cr", &*app_path])
-                    .output();
-                let _ = std::process::Command::new("codesign")
-                    .args(["--force", "--deep", "--sign", "-", &*app_path])
-                    .output();
+                if !utils::mac_needs_privilege(&wb_path) {
+                    let install_path = cursor_paths::get_cursor_install_from_base_path(base_path);
+                    let app_path = install_path.to_string_lossy();
+                    let _ = std::process::Command::new("xattr")
+                        .args(["-cr", &*app_path])
+                        .output();
+                    let _ = std::process::Command::new("codesign")
+                        .args(["--force", "--deep", "--sign", "-", &*app_path])
+                        .output();
+                }
             }
             serde_json::json!({"success": true, "message": "注入已移除"})
         }
