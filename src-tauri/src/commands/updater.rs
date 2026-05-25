@@ -24,6 +24,10 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
 
     // 使用系统临时目录存放下载文件和脚本，不污染 exe 所在目录
     let temp_dir = env::temp_dir();
+    // macOS 下载 DMG，Windows 下载 EXE
+    #[cfg(target_os = "macos")]
+    let temp_file = temp_dir.join(format!("cursor-renewal-update-{}.dmg", pid));
+    #[cfg(not(target_os = "macos"))]
     let temp_file = temp_dir.join(format!("cursor-renewal-update-{}.tmp", pid));
     let script_path = temp_dir.join(format!("cursor-renewal-updater-{}", pid));
 
@@ -261,8 +265,107 @@ try {{
         }
     }
 
-    // ========== macOS / Linux: Shell 安装脚本 ==========
-    #[cfg(not(target_os = "windows"))]
+    // ========== macOS: DMG 安装脚本 ==========
+    #[cfg(target_os = "macos")]
+    {
+        let script_path = script_path.with_extension("sh");
+        // macOS: 下载的是 DMG 文件，需要挂载、复制 .app、卸载
+        // current_exe 类似 /Applications/续杯助手.app/Contents/MacOS/续杯助手
+        // 需要找到 .app 包的路径
+        let sh_content = format!(
+            r#"#!/bin/bash
+set -e
+
+PID_TO_WAIT="{pid}"
+DMG_PATH="{archive}"
+CURRENT_EXE="{target}"
+
+# 从可执行文件路径推断 .app 包路径
+# 例如: /Applications/续杯助手.app/Contents/MacOS/续杯助手 -> /Applications/续杯助手.app
+APP_PATH="$(echo "$CURRENT_EXE" | sed 's|/Contents/MacOS/.*||')"
+APP_NAME="$(basename "$APP_PATH")"
+APP_DIR="$(dirname "$APP_PATH")"
+MOUNT_POINT="/Volumes/续杯助手_update_$$"
+
+cleanup() {{
+  hdiutil detach "$MOUNT_POINT" 2>/dev/null || true
+  rm -f "$DMG_PATH"
+  rm -f "$0"
+}}
+trap cleanup EXIT
+
+echo "[Updater] 等待主程序退出 (PID: $PID_TO_WAIT)..."
+while kill -0 "$PID_TO_WAIT" 2>/dev/null; do
+  sleep 1
+done
+sleep 2
+
+echo "[Updater] 挂载 DMG: $DMG_PATH"
+hdiutil attach "$DMG_PATH" -mountpoint "$MOUNT_POINT" -nobrowse -quiet
+
+# 在挂载点中查找 .app
+NEW_APP=$(find "$MOUNT_POINT" -maxdepth 1 -name "*.app" | head -1)
+if [ -z "$NEW_APP" ]; then
+  echo "[Updater] ERROR: DMG 中未找到 .app 文件"
+  exit 1
+fi
+echo "[Updater] 找到新版本: $NEW_APP"
+
+echo "[Updater] 删除旧版本: $APP_PATH"
+rm -rf "$APP_PATH"
+
+echo "[Updater] 复制新版本到: $APP_DIR/"
+cp -R "$NEW_APP" "$APP_DIR/"
+
+echo "[Updater] 卸载 DMG"
+hdiutil detach "$MOUNT_POINT" -quiet
+
+echo "[Updater] 启动新版本..."
+open "$APP_PATH"
+
+echo "[Updater] 完成！"
+"#,
+            pid = pid,
+            archive = temp_file.to_string_lossy(),
+            target = current_exe.to_string_lossy(),
+        );
+
+        if let Err(e) = fs::write(&script_path, &sh_content) {
+            utils::dlog!("[Updater] 写入 shell 脚本失败: {}", e);
+            return serde_json::json!({
+                "success": false,
+                "message": format!("写入更新脚本失败: {}", e)
+            });
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755));
+        }
+
+        utils::dlog!("[Updater] 启动 shell 安装脚本: {:?}", script_path);
+        match std::process::Command::new("sh")
+            .arg(&script_path)
+            .spawn()
+        {
+            Ok(_) => {
+                utils::dlog!("[Updater] shell 安装脚本已启动，等待主程序退出后执行替换");
+            }
+            Err(e) => {
+                utils::dlog!("[Updater] 启动 shell 脚本失败: {}", e);
+                let _ = fs::remove_file(&temp_file);
+                let _ = fs::remove_file(&script_path);
+                return serde_json::json!({
+                    "success": false,
+                    "message": format!("启动更新脚本失败: {}", e)
+                });
+            }
+        }
+    }
+
+    // ========== Linux: Shell 安装脚本 ==========
+    #[cfg(target_os = "linux")]
     {
         let script_path = script_path.with_extension("sh");
         let sh_content = format!(
@@ -311,11 +414,8 @@ nohup "$TARGET_EXECUTABLE" >/dev/null 2>&1 &
             });
         }
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755));
-        }
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755));
 
         utils::dlog!("[Updater] 启动 shell 安装脚本: {:?}", script_path);
         match std::process::Command::new("sh")
