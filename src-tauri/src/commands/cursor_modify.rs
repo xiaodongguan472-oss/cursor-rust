@@ -31,17 +31,35 @@ pub struct FileAnalysis {
     pub nullish_lines: Vec<serde_json::Value>,
 }
 
-fn validate_cursor_file(content: &str) -> Result<(), String> {
-    let open_braces = content.matches('{').count();
-    let close_braces = content.matches('}').count();
-    let open_parens = content.matches('(').count();
-    let close_parens = content.matches(')').count();
+/// 计算文本中各类括号数量
+fn count_brackets(s: &str) -> (usize, usize, usize, usize) {
+    (
+        s.matches('{').count(),
+        s.matches('}').count(),
+        s.matches('(').count(),
+        s.matches(')').count(),
+    )
+}
 
-    if open_braces != close_braces {
-        return Err(format!("大括号不匹配: {} vs {}", open_braces, close_braces));
+/// 修补差值校验：保证修补前后括号数量没有改变（我们的正则只移除 `??xxx`，括号应保持不变）
+///
+/// 注意：不能用绝对平衡校验（{}=={}），因为 main.js 是 14MB 巨型 bundle，
+/// 字符串/正则/注释中本来就有大量不平衡的 `{` `}`。
+fn validate_patch_diff(before: &str, after: &str) -> Result<(), String> {
+    let (b_ob, b_cb, b_op, b_cp) = count_brackets(before);
+    let (a_ob, a_cb, a_op, a_cp) = count_brackets(after);
+
+    if b_ob != a_ob || b_cb != a_cb {
+        return Err(format!(
+            "修补改变了大括号数量：{{ {} -> {}, }} {} -> {}",
+            b_ob, a_ob, b_cb, a_cb
+        ));
     }
-    if open_parens != close_parens {
-        return Err(format!("小括号不匹配: {} vs {}", open_parens, close_parens));
+    if b_op != a_op || b_cp != a_cp {
+        return Err(format!(
+            "修补改变了小括号数量：( {} -> {}, ) {} -> {}",
+            b_op, a_op, b_cp, a_cp
+        ));
     }
     Ok(())
 }
@@ -102,7 +120,8 @@ pub fn patch_main_js_file(main_path: &Path) -> Result<bool, String> {
         return Ok(false);
     }
 
-    validate_cursor_file(&new_content).map_err(|e| format!("语法验证失败: {}", e))?;
+    // 差值校验：修补前后括号数量必须完全相同（移除 ??xxx 不应改变括号）
+    validate_patch_diff(&content, &new_content).map_err(|e| format!("修补校验失败: {}", e))?;
 
     // === 直接写入，不做权限切换（与 MyCursor 完全一致）===
     fs::write(main_path, &new_content).map_err(|e| format!("写入文件失败: {}（提示：macOS 下 /Applications/Cursor.app 可能需要管理员权限）", e))?;
