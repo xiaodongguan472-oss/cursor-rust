@@ -11,7 +11,6 @@ pub mod permissions;
 pub mod model;
 pub mod proxy;
 pub mod seamless_switch;
-pub mod workbench_inject;
 pub mod workspace;
 pub mod window_ctrl;
 pub mod utils;

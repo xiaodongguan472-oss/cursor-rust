@@ -210,8 +210,8 @@ pub async fn xb2(enabled: bool) -> serde_json::Value {
 
 // === Seamless switch ===
 #[tauri::command]
-pub async fn xc1(card_code: Option<String>) -> serde_json::Value {
-    seamless_switch::patch_ext_host(card_code).await
+pub async fn xc1() -> serde_json::Value {
+    seamless_switch::patch_ext_host().await
 }
 #[tauri::command]
 pub async fn xc2() -> serde_json::Value {
@@ -256,32 +256,6 @@ pub async fn xcb(app: tauri::AppHandle, enabled: bool, card_code: Option<String>
 #[tauri::command]
 pub async fn xcc() -> serde_json::Value {
     seamless_switch::get_auto_switch_status().await
-}
-#[tauri::command]
-pub async fn xcd() -> serde_json::Value {
-    let s = workbench_inject::get_inject_status();
-    serde_json::json!({
-        "jsConnected": s.js_connected,
-        "storeCaptured": s.store_captured,
-        "lastHeartbeat": s.last_heartbeat,
-        "lastResetAck": s.last_reset_ack,
-        "resetCount": s.reset_count,
-    })
-}
-
-/// 设置自动换号上下文（前端有 cardCode 时主动调用）
-/// 用于程序启动时检测到已注入，但需要重新挂载 cardCode 才能自动换号
-#[tauri::command]
-pub async fn xce(card_code: String) -> bool {
-    if card_code.is_empty() {
-        workbench_inject::clear_auto_switch_context();
-        return false;
-    }
-    let db_path = utils::get_cursor_db_path()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    workbench_inject::set_auto_switch_context(card_code, db_path);
-    true
 }
 
 // === Workspace ===

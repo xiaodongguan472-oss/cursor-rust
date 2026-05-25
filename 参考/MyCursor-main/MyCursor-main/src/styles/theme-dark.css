@@ -1,0 +1,51 @@
+/**
+ * 暗色主题
+ * Dark Theme
+ */
+
+[data-theme="dark"] {
+  /* ========================================
+     文本颜色
+     ======================================== */
+  --text-primary: #e0e0e0;
+  --text-secondary: #ccc;
+  --text-tertiary: #888;
+
+  /* ========================================
+     背景颜色 - 支持自定义背景透明度
+     ======================================== */
+  --bg-primary: rgba(30, 30, 30, var(--content-bg-opacity, 1));
+  --bg-secondary: rgba(50, 50, 50, var(--content-bg-opacity, 1));
+  --bg-tertiary: rgba(40, 40, 40, var(--content-bg-opacity, 1));
+  --bg-hover: rgba(60, 60, 60, var(--content-bg-opacity, 1));
+  --bg-active: rgba(74, 137, 220, 0.2);
+
+  /* ========================================
+     边框颜色
+     ======================================== */
+  --border-primary: rgba(255, 255, 255, 0.1);
+  --border-secondary: #444;
+  --border-hover: rgba(255, 255, 255, 0.2);
+  --border-active: var(--primary-color);
+
+  /* ========================================
+     模态框背景 - 支持自定义背景透明度
+     ======================================== */
+  --modal-bg: rgba(40, 40, 40, calc(var(--content-bg-opacity, 1) * 0.95));
+  --modal-overlay: rgba(0, 0, 0, 0.7);
+
+  /* ========================================
+     阴影系统 - 暗色主题加深
+     ======================================== */
+  --shadow-light: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-medium: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-heavy: 0 4px 12px rgba(0, 0, 0, 0.5);
+
+  /* ========================================
+     滚动条
+     ======================================== */
+  --scrollbar-track: rgba(255, 255, 255, 0.05);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+}
+

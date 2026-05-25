@@ -1,0 +1,77 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.development
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Tauri
+src-tauri/target/
+src-tauri/Cargo.lock
+src-tauri/WixTools/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backup and temporary files
+*.backup.*
+*.optimized.*
+*.tmp
+*.temp
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Build artifacts
+*.tsbuildinfo
+
+# User data and sensitive information
+cursor_data/
+*.db
+*.sqlite
+*.vscdb
+
+# Python build artifacts (if any)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# macOS specific
+*.dmg
+*.app
+
+# Windows specific
+*.exe
+*.msi
+
+# Linux specific
+*.AppImage
+*.deb
+*.rpm

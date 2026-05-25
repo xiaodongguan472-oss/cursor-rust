@@ -1,0 +1,45 @@
+/**
+ * 亮色主题
+ * Light Theme
+ */
+
+[data-theme="light"],
+:root {
+  /* ========================================
+     文本颜色
+     ======================================== */
+  --text-primary: #333;
+  --text-secondary: #666;
+  --text-tertiary: #999;
+
+  /* ========================================
+     背景颜色 - 支持自定义背景透明度
+     ======================================== */
+  --bg-primary: rgba(255, 255, 255, var(--content-bg-opacity, 1));
+  --bg-secondary: rgba(248, 249, 250, var(--content-bg-opacity, 1));
+  --bg-tertiary: rgba(240, 240, 240, var(--content-bg-opacity, 1));
+  --bg-hover: rgba(248, 249, 250, var(--content-bg-opacity, 1));
+  --bg-active: rgba(240, 247, 255, var(--content-bg-opacity, 1));
+
+  /* ========================================
+     边框颜色
+     ======================================== */
+  --border-primary: #d7d7d7;
+  --border-secondary: #c3c3c3;
+  --border-hover: #d0d7de;
+  --border-active: var(--primary-color);
+
+  /* ========================================
+     模态框背景 - 支持自定义背景透明度
+     ======================================== */
+  --modal-bg: rgba(255, 255, 255, var(--content-bg-opacity, 1));
+  --modal-overlay: rgba(0, 0, 0, 0.5);
+
+  /* ========================================
+     滚动条
+     ======================================== */
+  --scrollbar-track: rgba(0, 0, 0, 0.05);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+}
+

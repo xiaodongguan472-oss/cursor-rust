@@ -1,0 +1,98 @@
+/**
+ * 高透明度主题
+ * Transparent Theme
+ * 适合自定义背景使用
+ */
+
+[data-theme="transparent"] {
+  /* ========================================
+     文本颜色 - 根据背景自动调整
+     ======================================== */
+  --text-primary: #ffffff;
+  --text-secondary: #e0e0e0;
+  --text-tertiary: #ccc;
+
+  /* ========================================
+     背景颜色 - 支持自定义背景透明度
+     ======================================== */
+  --bg-primary: rgba(30, 30, 30, calc(var(--content-bg-opacity, 1) * 0.85));
+  --bg-secondary: rgba(50, 50, 50, calc(var(--content-bg-opacity, 1) * 0.85));
+  --bg-tertiary: rgba(40, 40, 40, calc(var(--content-bg-opacity, 1) * 0.9));
+  --bg-hover: rgba(60, 60, 60, calc(var(--content-bg-opacity, 1) * 0.85));
+  --bg-active: rgba(74, 137, 220, 0.3);
+
+  /* ========================================
+     边框颜色 - 更明显的边框
+     ======================================== */
+  --border-primary: rgba(255, 255, 255, 0.2);
+  --border-secondary: rgba(255, 255, 255, 0.15);
+  --border-hover: rgba(255, 255, 255, 0.3);
+  --border-active: var(--primary-color);
+
+  /* ========================================
+     模态框背景 - 强毛玻璃效果，支持自定义背景透明度
+     ======================================== */
+  --modal-bg: rgba(40, 40, 40, calc(var(--content-bg-opacity, 1) * 0.9));
+  --modal-overlay: rgba(0, 0, 0, 0.8);
+
+  /* ========================================
+     阴影系统 - 更强的阴影
+     ======================================== */
+  --shadow-light: 0 2px 6px rgba(0, 0, 0, 0.4);
+  --shadow-medium: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-heavy: 0 8px 20px rgba(0, 0, 0, 0.6);
+
+  /* ========================================
+     滚动条
+     ======================================== */
+  --scrollbar-track: rgba(255, 255, 255, 0.1);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.3);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.4);
+
+  /* ========================================
+     毛玻璃效果 - 增强
+     ======================================== */
+  --backdrop-blur: 15px;
+  --backdrop-blur-heavy: 30px;
+}
+
+/* 透明主题下的毛玻璃效果 */
+[data-theme="transparent"] .card,
+[data-theme="transparent"] .modal-content,
+[data-theme="transparent"] .sidebar {
+  backdrop-filter: blur(var(--backdrop-blur));
+  -webkit-backdrop-filter: blur(var(--backdrop-blur));
+}
+
+/* 透明主题下增强文字对比度 - 添加阴影确保可读性 */
+[data-theme="transparent"] {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+/* 标题和重要文字使用更强的阴影 */
+[data-theme="transparent"] h1,
+[data-theme="transparent"] h2,
+[data-theme="transparent"] h3,
+[data-theme="transparent"] h4,
+[data-theme="transparent"] h5,
+[data-theme="transparent"] h6,
+[data-theme="transparent"] .font-bold,
+[data-theme="transparent"] .font-semibold {
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+}
+
+/* 按钮文字不需要额外阴影（已有背景） */
+[data-theme="transparent"] button {
+  text-shadow: none;
+}
+
+/* 卡片和模态框使用 CSS 变量控制透明度 */
+[data-theme="transparent"] .card {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+/* 侧边栏保持较高不透明度以确保可读性 */
+[data-theme="transparent"] .sidebar {
+  background-color: rgba(30, 30, 30, calc(var(--content-bg-opacity, 1) * 0.95)) !important;
+}
+

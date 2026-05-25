@@ -46,27 +46,25 @@ fn validate_cursor_file(content: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn modify_cursor_main_js(main_path: String) -> ModifyResult {
-    if !Path::new(&main_path).exists() {
-        return ModifyResult { success: false, message: None, error: Some("文件不存在".to_string()) };
+/// 同步修补 main.js 文件，去掉 getMachineId/getMacMachineId 的 ?? fallback
+/// 返回 Ok(true) 表示修改了文件，Ok(false) 表示已经是修补过的状态，Err 表示失败
+pub fn patch_main_js_file(main_path: &Path) -> Result<bool, String> {
+    if !main_path.exists() {
+        return Err("文件不存在".to_string());
     }
 
     // Create backup
-    let backup_path = format!("{}.bak", main_path);
-    if !Path::new(&backup_path).exists() {
-        let _ = fs::copy(&main_path, &backup_path);
+    let backup_path = main_path.with_extension("js.bak");
+    if !backup_path.exists() {
+        let _ = fs::copy(main_path, &backup_path);
     }
 
-    let content = match fs::read_to_string(&main_path) {
-        Ok(c) => c,
-        Err(e) => return ModifyResult { success: false, message: None, error: Some(format!("读取文件失败: {}", e)) },
-    };
+    let content = fs::read_to_string(main_path).map_err(|e| format!("读取文件失败: {}", e))?;
 
     let mut new_content = content.clone();
     let mut modified = false;
 
-    // Pattern 1: async getMachineId(){return ...??...}
+    // 严格模式：精确匹配 async getMachineId(){return ...??...}
     let patterns = [
         (r"async getMachineId\(\)\{return [^??]+\?\?([^}]+)\}", "async getMachineId(){return $1}"),
         (r"async getMacMachineId\(\)\{return [^??]+\?\?([^}]+)\}", "async getMacMachineId(){return $1}"),
@@ -79,13 +77,12 @@ pub async fn modify_cursor_main_js(main_path: String) -> ModifyResult {
                 new_content = re.replace_all(&new_content, *replacement).to_string();
                 if new_content != before {
                     modified = true;
-                    break;
                 }
             }
         }
     }
 
-    // Loose pattern fallback
+    // 宽松模式 fallback
     if !modified {
         if let Ok(re) = regex::Regex::new(r"(getMachineId[^{]*\{[^}]*?return\s+[^;]*?)(\?\?)([^;}]+)") {
             if re.is_match(&new_content) {
@@ -98,27 +95,31 @@ pub async fn modify_cursor_main_js(main_path: String) -> ModifyResult {
         }
     }
 
-    if modified {
-        if let Err(e) = validate_cursor_file(&new_content) {
-            return ModifyResult {
-                success: false, message: None,
-                error: Some(format!("语法验证失败: {}", e)),
-            };
-        }
+    if !modified {
+        // 已经修补过或不包含 getMachineId
+        return Ok(false);
+    }
 
-        let main_path_buf = Path::new(&main_path).to_path_buf();
-        let write_result = utils::safe_modify_file(&main_path_buf, || {
-            fs::write(&main_path, &new_content).map_err(|e| format!("写入文件失败: {}", e))
-        });
-        match write_result {
-            Ok(_) => ModifyResult { success: true, message: Some("文件修改成功".to_string()), error: None },
-            Err(e) => ModifyResult { success: false, message: None, error: Some(e) },
-        }
-    } else {
-        ModifyResult {
+    validate_cursor_file(&new_content).map_err(|e| format!("语法验证失败: {}", e))?;
+
+    let main_path_buf = main_path.to_path_buf();
+    utils::safe_modify_file(&main_path_buf, || {
+        fs::write(&main_path_buf, &new_content).map_err(|e| format!("写入文件失败: {}", e))
+    })?;
+
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn modify_cursor_main_js(main_path: String) -> ModifyResult {
+    let path = Path::new(&main_path).to_path_buf();
+    match patch_main_js_file(&path) {
+        Ok(true) => ModifyResult { success: true, message: Some("文件修改成功".to_string()), error: None },
+        Ok(false) => ModifyResult {
             success: false, message: None,
             error: Some("未找到匹配的函数模式，建议启用强制修改模式或手动修改".to_string()),
-        }
+        },
+        Err(e) => ModifyResult { success: false, message: None, error: Some(e) },
     }
 }
 

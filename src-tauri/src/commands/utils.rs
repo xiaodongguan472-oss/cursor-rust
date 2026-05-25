@@ -86,6 +86,10 @@ pub mod keys {
     #[inline(always)] pub fn telem_mac() -> String { format!("{}{}", obfstr!("telemetry."), obfstr!("macMachineId")) }
     #[inline(always)] pub fn telem_dev() -> String { format!("{}{}", obfstr!("telemetry."), obfstr!("devDeviceId")) }
     #[inline(always)] pub fn telem_sqm() -> String { format!("{}{}", obfstr!("telemetry."), obfstr!("sqmId")) }
+    #[inline(always)] pub fn telem_machine_guid() -> String { format!("{}{}", obfstr!("telemetry."), obfstr!("machineGuid")) }
+    #[inline(always)] pub fn telem_sqm_client() -> String { format!("{}{}", obfstr!("telemetry."), obfstr!("sqmClientId")) }
+    // === storage.* ===
+    #[inline(always)] pub fn storage_service_machine() -> String { format!("{}{}", obfstr!("storage."), obfstr!("serviceMachineId")) }
     // === auth/ + 杂项 ===
     #[inline(always)] pub fn auth_user() -> String { format!("{}{}", obfstr!("auth/"), obfstr!("user")) }
     #[inline(always)] pub fn auth_session() -> String { format!("{}{}", obfstr!("auth/"), obfstr!("session")) }
@@ -111,6 +115,7 @@ pub fn get_cursor_data_dir() -> Option<PathBuf> {
 }
 
 /// Get the Cursor state.vscdb path
+#[allow(dead_code)]
 pub fn get_cursor_db_path() -> Option<PathBuf> {
     get_cursor_data_dir().map(|d| d.join("User").join("globalStorage").join("state.vscdb"))
 }
@@ -311,6 +316,24 @@ pub fn generate_stable_machine_id() -> String {
     hex::encode(&result[..16])
 }
 
+/// 生成 SHA-256 格式的 telemetry.machineId（64位 hex，与 Cursor 原本格式一致）
+pub fn generate_machine_id_sha256() -> String {
+    use sha2::{Sha256, Digest};
+    use rand::Rng;
+    let mut data = [0u8; 32];
+    rand::thread_rng().fill(&mut data);
+    format!("{:x}", Sha256::digest(&data))
+}
+
+/// 生成 SHA-512 格式的 telemetry.macMachineId（128位 hex，与 Cursor 原本格式一致）
+pub fn generate_mac_machine_id_sha512() -> String {
+    use sha2::{Sha512, Digest};
+    use rand::Rng;
+    let mut data = [0u8; 64];
+    rand::thread_rng().fill(&mut data);
+    format!("{:x}", Sha512::digest(&data))
+}
+
 /// Check if a file is read-only
 pub fn is_file_read_only(path: &std::path::Path) -> bool {
     if let Ok(metadata) = std::fs::metadata(path) {
@@ -374,146 +397,4 @@ where
     }
 
     result
-}
-
-// ============================================================================
-// macOS App Management 提权写入策略
-//
-// 背景：macOS Sonoma/Sequoia 引入 App Management TCC 保护，
-//   /Applications/Cursor.app 内的文件即便 root 也会 EPERM。
-// 解决：整包副本 → 在副本里改 → 由内向外 ad-hoc 重签 → 原子替换 (rm + mv)。
-// 与 Python 参考实现 core/cursor_injector.py 中的 _mac_replace_file_in_app 等价。
-// ============================================================================
-
-/// 检测路径是否需要提权才能写入（macOS 用，其他平台一律返回 false）
-#[cfg(target_os = "macos")]
-pub fn mac_needs_privilege(path: &std::path::Path) -> bool {
-    let parent = match path.parent() {
-        Some(p) => p,
-        None => return true,
-    };
-    // 直接尝试写一个临时文件来判断
-    let probe = parent.join(".mc_perm_probe");
-    match std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&probe)
-    {
-        Ok(_) => {
-            let _ = std::fs::remove_file(&probe);
-            false
-        }
-        Err(_) => true,
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-#[allow(dead_code)]
-pub fn mac_needs_privilege(_path: &std::path::Path) -> bool { false }
-
-/// 向上找到包含 target 的 .app 根目录
-#[cfg(target_os = "macos")]
-pub fn mac_find_app_root(path: &std::path::Path) -> Option<std::path::PathBuf> {
-    let mut p = path.to_path_buf();
-    loop {
-        if p.extension().and_then(|s| s.to_str()) == Some("app") {
-            return Some(p);
-        }
-        match p.parent() {
-            Some(parent) => p = parent.to_path_buf(),
-            None => return None,
-        }
-    }
-}
-
-/// 通过 osascript 提权将 src_file 替换到 target_path（target_path 必须在 .app 内）。
-/// 步骤：
-/// 1. 复制 .app → .wxtmp 副本（APFS clonefile，秒级）
-/// 2. 解锁副本：chflags / chmod / xattr
-/// 3. 在副本里写入新文件
-/// 4. 移除签名，由内向外重签 Helper Bundles + 外层 bundle
-/// 5. 原子替换：rm -rf 旧 .app + mv 副本 → .app
-#[cfg(target_os = "macos")]
-pub fn mac_privileged_replace_in_app(
-    src_file: &std::path::Path,
-    target_path: &std::path::Path,
-) -> Result<(), String> {
-    let app_root = mac_find_app_root(target_path)
-        .ok_or_else(|| format!("未定位到 .app 根目录: {}", target_path.display()))?;
-    let rel = target_path
-        .strip_prefix(&app_root)
-        .map_err(|e| format!("路径计算失败: {}", e))?;
-
-    let app_str = app_root.to_string_lossy().to_string();
-    let tmp_str = format!("{}.wxtmp", app_str);
-
-    fn esc(s: &str) -> String { s.replace('\'', "'\\''") }
-
-    let e_app = esc(&app_str);
-    let e_tmp = esc(&tmp_str);
-    let e_src = esc(&src_file.to_string_lossy());
-    let e_rel = esc(&rel.to_string_lossy());
-    let e_fw = esc(&format!("{}/Contents/Frameworks", &tmp_str));
-
-    // 注意：所有步骤用 && 串联，任何一步失败则整体失败，副本残留下次清理
-    let shell_cmd = format!(
-        "rm -rf '{e_tmp}' && \
-         cp -a '{e_app}' '{e_tmp}' && \
-         chflags -R nouchg '{e_tmp}' && \
-         chmod -R u+w '{e_tmp}' && \
-         xattr -cr '{e_tmp}' && \
-         cp -f '{e_src}' '{e_tmp}/{e_rel}' && \
-         (codesign --remove-signature '{e_tmp}' || true) && \
-         (if [ -d '{e_fw}' ]; then find '{e_fw}' -name '*.app' -type d -print0 | xargs -0 -I HELPER codesign --force --timestamp=none --sign - 'HELPER'; fi) && \
-         codesign --force --timestamp=none --sign - '{e_tmp}' && \
-         rm -rf '{e_app}' && \
-         mv '{e_tmp}' '{e_app}'",
-        e_app = e_app, e_tmp = e_tmp, e_src = e_src, e_rel = e_rel, e_fw = e_fw,
-    );
-
-    // 转义双引号以嵌入 AppleScript 字符串
-    let osa_script = format!(
-        "do shell script \"{}\" with administrator privileges",
-        shell_cmd.replace('\\', "\\\\").replace('"', "\\\""),
-    );
-
-    let output = std::process::Command::new("osascript")
-        .args(["-e", &osa_script])
-        .output()
-        .map_err(|e| format!("osascript 调用失败: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let lower = stderr.to_lowercase();
-        if lower.contains("user canceled") || lower.contains("-128") {
-            return Err("您取消了授权，请重新操作并输入密码".to_string());
-        }
-        return Err(format!("提权写入失败: {}", stderr.trim()));
-    }
-    Ok(())
-}
-
-/// 将新内容写入 .app 内的目标 JS 文件（自动判断是否需要 macOS 提权）。
-/// - macOS 需要提权：写到临时文件 → osascript 替换
-/// - macOS 不需要提权 或 其他平台：直接 fs::write
-/// 适用于 workbench.desktop.main.js / extensionHostProcess.js 等所有 .app 内文件。
-pub fn write_file_in_app(target_path: &std::path::Path, new_content: &str) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        if mac_needs_privilege(target_path) {
-            // 写入临时文件
-            let tmp_dir = std::env::temp_dir();
-            let tmp_file = tmp_dir.join(format!("mc_inject_{}.js", std::process::id()));
-            std::fs::write(&tmp_file, new_content)
-                .map_err(|e| format!("写入临时文件失败: {}", e))?;
-            let res = mac_privileged_replace_in_app(&tmp_file, target_path);
-            let _ = std::fs::remove_file(&tmp_file);
-            return res;
-        }
-    }
-    // 直接写（其他平台 / macOS 但可直接写入）
-    safe_modify_file(target_path, || {
-        std::fs::write(target_path, new_content).map_err(|e| format!("写入文件失败: {}", e))
-    })
 }

@@ -10475,7 +10475,7 @@
 
                 ElMessage.info('正在开启激活无感换号...');
 
-                const result = await ipcRenderer.invoke('xc1', { cardCode: this.cardCode });
+                const result = await ipcRenderer.invoke('xc1');
 
                 if (result.success) {
 
@@ -10731,7 +10731,7 @@
 
               await ElMessageBox.confirm(
 
-                '将自动关闭 Cursor 后重置机器码，重置完成后请重新打开 Cursor。是否继续？',
+                '请先点击无感换号再执行重置机器码，是否继续？',
 
                 '提示',
 
@@ -10863,7 +10863,7 @@
 
                 ElMessage.info('正在开启激活无感换号...');
 
-                const patchResult = await ipcRenderer.invoke('xc1', { cardCode: this.cardCode });
+                const patchResult = await ipcRenderer.invoke('xc1');
 
                 if (patchResult.success) {
 
