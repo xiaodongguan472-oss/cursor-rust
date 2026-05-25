@@ -131,14 +131,38 @@ jobs:
           codesign --force --deep --sign - "$APP_FILE"
           codesign --verify "$APP_FILE" && echo "✓ Signature valid"
 
-          # 2. 创建 DMG（用签名后的 .app 重新制作）
-          APP_NAME=$(basename "$APP_FILE")
+          # 2. 安装 create-dmg
+          brew install create-dmg || true
+
+          # 3. 生成 DMG 背景图片
+          bash scripts/create-dmg-background.sh /tmp/dmg-background.png
+
+          # 4. 使用 create-dmg 创建美观的 DMG
+          APP_NAME=$(basename "$APP_FILE" .app)
           DMG_OUT="${{ matrix.output_name }}"
-          DMG_TMP="/tmp/dmg_staging"
-          rm -rf "$DMG_TMP" && mkdir -p "$DMG_TMP"
-          cp -R "$APP_FILE" "$DMG_TMP/"
-          ln -s /Applications "$DMG_TMP/Applications"
-          hdiutil create -volname "续杯助手" -srcfolder "$DMG_TMP" -ov -format UDZO "$DMG_OUT"
+
+          create-dmg \
+            --volname "续杯助手" \
+            --volicon "src-tauri/icons/icon.icns" \
+            --background "/tmp/dmg-background.png" \
+            --window-pos 200 120 \
+            --window-size 660 400 \
+            --icon-size 100 \
+            --icon "$APP_NAME.app" 180 200 \
+            --app-drop-link 480 200 \
+            --hide-extension "$APP_NAME.app" \
+            --no-internet-enable \
+            "$DMG_OUT" \
+            "$APP_FILE" \
+          || {
+            # 如果 create-dmg 失败，退回简单方式
+            echo "⚠ create-dmg failed, fallback to hdiutil"
+            DMG_TMP="/tmp/dmg_staging"
+            rm -rf "$DMG_TMP" && mkdir -p "$DMG_TMP"
+            cp -R "$APP_FILE" "$DMG_TMP/"
+            ln -s /Applications "$DMG_TMP/Applications"
+            hdiutil create -volname "续杯助手" -srcfolder "$DMG_TMP" -ov -format UDZO "$DMG_OUT"
+          }
           echo "✓ DMG ready: $(ls -lh "$DMG_OUT")"
 
       # ========== Release ==========
