@@ -182,58 +182,77 @@ pub fn start_local_server() {
 
     SERVER_RUNNING.store(true, Ordering::SeqCst);
 
-    tokio::spawn(async move {
-        use tokio::net::TcpListener;
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    // 安全启动：检测 tokio runtime 是否可用
+    // 如果在 tauri setup 之前调用（无 runtime），则自建线程+runtime
+    let spawn_ok = tokio::runtime::Handle::try_current()
+        .map(|handle| {
+            handle.spawn(run_server());
+            true
+        })
+        .unwrap_or(false);
 
-        let addr = format!("127.0.0.1:{}", LOCAL_SERVER_PORT);
-        let listener = match TcpListener::bind(&addr).await {
-            Ok(l) => l,
-            Err(_) => {
-                SERVER_RUNNING.store(false, Ordering::SeqCst);
-                return;
-            }
+    if !spawn_ok {
+        std::thread::spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to create tokio runtime for local server");
+            rt.block_on(run_server());
+        });
+    }
+}
+
+async fn run_server() {
+    use tokio::net::TcpListener;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let addr = format!("127.0.0.1:{}", LOCAL_SERVER_PORT);
+    let listener = match TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(_) => {
+            SERVER_RUNNING.store(false, Ordering::SeqCst);
+            return;
+        }
+    };
+
+    while SERVER_RUNNING.load(Ordering::SeqCst) {
+        let accept_result = tokio::select! {
+            result = listener.accept() => result,
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => continue,
         };
 
-        while SERVER_RUNNING.load(Ordering::SeqCst) {
-            let accept_result = tokio::select! {
-                result = listener.accept() => result,
-                _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => continue,
+        let (mut stream, _) = match accept_result {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 4096];
+            let n = match stream.read(&mut buf).await {
+                Ok(n) if n > 0 => n,
+                _ => return,
             };
 
-            let (mut stream, _) = match accept_result {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            let response = handle_request(&request);
 
-            tokio::spawn(async move {
-                let mut buf = vec![0u8; 4096];
-                let n = match stream.read(&mut buf).await {
-                    Ok(n) if n > 0 => n,
-                    _ => return,
-                };
+            let http_response = format!(
+                "HTTP/1.1 200 OK\r\n\
+                 Content-Type: application/json\r\n\
+                 Access-Control-Allow-Origin: *\r\n\
+                 Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
+                 Access-Control-Allow-Headers: Content-Type\r\n\
+                 Content-Length: {}\r\n\
+                 Connection: close\r\n\
+                 \r\n\
+                 {}",
+                response.len(),
+                response
+            );
 
-                let request = String::from_utf8_lossy(&buf[..n]).to_string();
-                let response = handle_request(&request);
-
-                let http_response = format!(
-                    "HTTP/1.1 200 OK\r\n\
-                     Content-Type: application/json\r\n\
-                     Access-Control-Allow-Origin: *\r\n\
-                     Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
-                     Access-Control-Allow-Headers: Content-Type\r\n\
-                     Content-Length: {}\r\n\
-                     Connection: close\r\n\
-                     \r\n\
-                     {}",
-                    response.len(),
-                    response
-                );
-
-                let _ = stream.write_all(http_response.as_bytes()).await;
-            });
-        }
-    });
+            let _ = stream.write_all(http_response.as_bytes()).await;
+        });
+    }
 }
 
 /// 停止本地HTTP服务器
