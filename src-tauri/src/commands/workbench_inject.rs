@@ -150,6 +150,39 @@ pub fn update_disk_files(ids: &MachineIds) -> Result<(), String> {
             .map_err(|e| format!("写入storage.json失败: {}", e))?;
     }
 
+    // 3. 更新 state.vscdb（SQLite）— 这是 Cursor 启动时实际读取 telemetry ID 的位置
+    //    参考实现的 MachineIDResetter._update_sqlite_db 做了同样的事
+    let vscdb_path = cursor_dir.join("User").join("globalStorage").join("state.vscdb");
+    if vscdb_path.exists() {
+        utils::clear_macos_immutable_flag(&vscdb_path);
+        match rusqlite::Connection::open(&vscdb_path) {
+            Ok(conn) => {
+                let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=8000;");
+                let _ = conn.execute(
+                    "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)",
+                    [],
+                );
+                let telemetry_updates: [(&str, &str); 5] = [
+                    (&utils::keys::telem_dev(), &ids.dev_device_id),
+                    (&utils::keys::telem_mac(), &ids.mac_machine_id),
+                    (&utils::keys::telem_machine(), &ids.machine_id),
+                    (&utils::keys::telem_sqm(), &ids.sqm_id),
+                    (&obfstr::obfstr!("storage.serviceMachineId").to_string(), &ids.service_machine_id),
+                ];
+                for (key, value) in &telemetry_updates {
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?1, ?2)",
+                        rusqlite::params![key, value],
+                    );
+                }
+            }
+            Err(e) => {
+                // SQLite 写入失败不阻断整体流程（与参考实现一致）
+                eprintln!("[workbench_inject] state.vscdb 更新失败: {}", e);
+            }
+        }
+    }
+
     Ok(())
 }
 

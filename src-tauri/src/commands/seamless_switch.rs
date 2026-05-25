@@ -514,6 +514,16 @@ pub async fn patch_ext_host() -> serde_json::Value {
     // 启动本地HTTP服务（供注入JS轮询机器码状态）
     workbench_inject::start_local_server();
 
+    // 注入时同步重置机器码（与参考实现一致：注入 = 注入JS + 重置机器码 + 写入状态）
+    // 这样用户重启 Cursor 后立刻使用新的 telemetry ID，不再被识别为旧设备
+    let reset_ok = match workbench_inject::perform_machine_reset() {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("[patch_ext_host] 机器码重置失败: {}", e);
+            false
+        }
+    };
+
     // 合并结果
     let eh_ok = eh_result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
     let wb_ok = wb_result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -522,6 +532,7 @@ pub async fn patch_ext_host() -> serde_json::Value {
         "success": eh_ok,
         "patched": eh_ok,
         "wbPatched": wb_ok,
+        "machineReset": reset_ok,
         "wbError": if wb_ok { serde_json::Value::Null } else { wb_result.get("error").cloned().unwrap_or(serde_json::Value::Null) },
     })
 }
