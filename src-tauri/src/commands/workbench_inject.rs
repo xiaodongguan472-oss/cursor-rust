@@ -125,7 +125,42 @@ pub fn generate_machine_ids() -> MachineIds {
 
 // ========== 磁盘文件更新 ==========
 
-/// 更新磁盘上的机器码文件（machineId文件 + storage.json）
+/// 写文件重试（与参考实现的 _write_with_retry 一致：6 次重试 × 1s 间隔）
+/// 缓解 Windows 进程退出后文件句柄短暂未释放的问题
+fn write_with_retry<F>(path: &Path, mut writer: F) -> Result<(), String>
+where
+    F: FnMut() -> std::io::Result<()>,
+{
+    let mut last_err: Option<std::io::Error> = None;
+    for attempt in 0..6 {
+        match writer() {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                eprintln!(
+                    "[reset] 写入失败 (尝试 {}/6) {}: {}",
+                    attempt + 1,
+                    path.display(),
+                    e
+                );
+                last_err = Some(e);
+                if attempt < 5 {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+            }
+        }
+    }
+    Err(format!(
+        "写入 {} 最终失败: {}",
+        path.display(),
+        last_err.map(|e| e.to_string()).unwrap_or_default()
+    ))
+}
+
+/// 更新磁盘上的机器码文件（machineId文件 + storage.json + state.vscdb）
+/// 与参考实现 MachineIDResetter.reset() 完全对齐：
+/// - 所有文件写入均带重试（Windows 文件锁释放滞后）
+/// - state.vscdb 用 5 次连接重试（SQLite 锁释放滞后）
+/// 调用方应在调用前先 kill_cursor() 释放文件锁
 pub fn update_disk_files(ids: &MachineIds) -> Result<(), String> {
     let cursor_dir = utils::get_cursor_data_dir()
         .ok_or_else(|| "无法确定Cursor数据目录".to_string())?;
@@ -134,67 +169,111 @@ pub fn update_disk_files(ids: &MachineIds) -> Result<(), String> {
         return Err(format!("Cursor数据目录不存在: {}", cursor_dir.display()));
     }
 
-    // 1. 写入 machineId 文件
+    // 1. 写入 machineId 文件（带重试）
     let machine_id_file = cursor_dir.join("machineId");
     utils::clear_macos_immutable_flag(&machine_id_file);
-    fs::write(&machine_id_file, &ids.machine_id)
-        .map_err(|e| format!("写入machineId文件失败: {}", e))?;
+    if let Some(parent) = machine_id_file.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    write_with_retry(&machine_id_file, || fs::write(&machine_id_file, &ids.machine_id))?;
 
-    // 2. 更新 storage.json
+    // 2. 更新 storage.json（带重试）
     let storage_path = cursor_dir.join("User").join("globalStorage").join("storage.json");
-    if storage_path.exists() {
-        utils::clear_macos_immutable_flag(&storage_path);
-        let content = fs::read_to_string(&storage_path)
-            .map_err(|e| format!("读取storage.json失败: {}", e))?;
-        let mut config: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| format!("解析storage.json失败: {}", e))?;
+    if let Some(parent) = storage_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    utils::clear_macos_immutable_flag(&storage_path);
 
-        if let Some(obj) = config.as_object_mut() {
-            obj.insert(utils::keys::telem_machine(), serde_json::json!(ids.machine_id));
-            obj.insert(utils::keys::telem_mac(), serde_json::json!(ids.mac_machine_id));
-            obj.insert(utils::keys::telem_dev(), serde_json::json!(ids.dev_device_id));
-            obj.insert(utils::keys::telem_sqm(), serde_json::json!(ids.sqm_id));
-            // serviceMachineId
-            let svc_key = obfstr::obfstr!("storage.serviceMachineId").to_string();
-            obj.insert(svc_key, serde_json::json!(ids.service_machine_id));
+    let mut config: serde_json::Value = if storage_path.exists() {
+        match fs::read_to_string(&storage_path) {
+            Ok(content) => serde_json::from_str(&content)
+                .unwrap_or_else(|_| serde_json::json!({})),
+            Err(_) => serde_json::json!({}),
         }
-
-        let updated = serde_json::to_string_pretty(&config)
-            .map_err(|e| format!("序列化storage.json失败: {}", e))?;
-        fs::write(&storage_path, updated)
-            .map_err(|e| format!("写入storage.json失败: {}", e))?;
+    } else {
+        serde_json::json!({})
+    };
+    if let Some(obj) = config.as_object_mut() {
+        obj.insert(utils::keys::telem_machine(), serde_json::json!(ids.machine_id));
+        obj.insert(utils::keys::telem_mac(), serde_json::json!(ids.mac_machine_id));
+        obj.insert(utils::keys::telem_dev(), serde_json::json!(ids.dev_device_id));
+        obj.insert(utils::keys::telem_sqm(), serde_json::json!(ids.sqm_id));
+        let svc_key = obfstr::obfstr!("storage.serviceMachineId").to_string();
+        obj.insert(svc_key, serde_json::json!(ids.service_machine_id));
+    }
+    let updated = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("序列化storage.json失败: {}", e))?;
+    // storage.json 写入失败不致命，仅记录（参考实现一致）
+    if let Err(e) = write_with_retry(&storage_path, || fs::write(&storage_path, &updated)) {
+        eprintln!("[reset] storage.json 写入失败（非致命）: {}", e);
     }
 
-    // 3. 更新 state.vscdb（SQLite）— 这是 Cursor 启动时实际读取 telemetry ID 的位置
-    //    参考实现的 MachineIDResetter._update_sqlite_db 做了同样的事
+    // 3. 更新 state.vscdb（SQLite）—— Cursor 启动时实际读取 telemetry ID 的位置
     let vscdb_path = cursor_dir.join("User").join("globalStorage").join("state.vscdb");
     if vscdb_path.exists() {
         utils::clear_macos_immutable_flag(&vscdb_path);
-        match rusqlite::Connection::open(&vscdb_path) {
-            Ok(conn) => {
-                let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=8000;");
-                let _ = conn.execute(
-                    "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)",
-                    [],
-                );
-                let telemetry_updates: [(&str, &str); 5] = [
-                    (&utils::keys::telem_dev(), &ids.dev_device_id),
-                    (&utils::keys::telem_mac(), &ids.mac_machine_id),
-                    (&utils::keys::telem_machine(), &ids.machine_id),
-                    (&utils::keys::telem_sqm(), &ids.sqm_id),
-                    (&obfstr::obfstr!("storage.serviceMachineId").to_string(), &ids.service_machine_id),
-                ];
-                for (key, value) in &telemetry_updates {
-                    let _ = conn.execute(
-                        "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?1, ?2)",
-                        rusqlite::params![key, value],
+        // 5 次连接重试（与参考实现一致），处理 Cursor 退出后 SQLite 句柄释放滞后
+        let mut last_err: Option<String> = None;
+        let mut sqlite_ok = false;
+        for attempt in 0..5 {
+            match rusqlite::Connection::open(&vscdb_path) {
+                Ok(conn) => {
+                    let _ = conn.execute_batch(
+                        "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=8000;",
                     );
+                    // VS Code 用的就是 ItemTable（大写 I），SQLite 表名默认大小写不敏感
+                    let _ = conn.execute(
+                        "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)",
+                        [],
+                    );
+                    let telemetry_updates: [(&str, &str); 5] = [
+                        (&utils::keys::telem_dev(), &ids.dev_device_id),
+                        (&utils::keys::telem_mac(), &ids.mac_machine_id),
+                        (&utils::keys::telem_machine(), &ids.machine_id),
+                        (&utils::keys::telem_sqm(), &ids.sqm_id),
+                        (
+                            &obfstr::obfstr!("storage.serviceMachineId").to_string(),
+                            &ids.service_machine_id,
+                        ),
+                    ];
+                    let mut all_ok = true;
+                    for (key, value) in &telemetry_updates {
+                        if let Err(e) = conn.execute(
+                            "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?1, ?2)",
+                            rusqlite::params![key, value],
+                        ) {
+                            eprintln!(
+                                "[reset] state.vscdb 写入 key={} 失败 (尝试 {}/5): {}",
+                                key, attempt + 1, e
+                            );
+                            all_ok = false;
+                            last_err = Some(e.to_string());
+                            break;
+                        }
+                    }
+                    if all_ok {
+                        sqlite_ok = true;
+                        println!("[reset] state.vscdb 已更新（5 个 telemetry 字段）");
+                        break;
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[reset] state.vscdb 连接失败 (尝试 {}/5): {}",
+                        attempt + 1, e
+                    );
+                    last_err = Some(e.to_string());
                 }
             }
-            Err(e) => {
-                // SQLite 写入失败不阻断整体流程（与参考实现一致）
-                eprintln!("[workbench_inject] state.vscdb 更新失败: {}", e);
+            if attempt < 4 {
+                std::thread::sleep(std::time::Duration::from_secs(1));
             }
+        }
+        if !sqlite_ok {
+            return Err(format!(
+                "state.vscdb 写入失败（重试 5 次后仍失败，可能 Cursor 进程未完全退出）: {}",
+                last_err.unwrap_or_default()
+            ));
         }
     }
 

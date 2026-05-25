@@ -3,6 +3,7 @@ use std::fs;
 use uuid::Uuid;
 use super::utils;
 use super::workbench_inject;
+use super::cursor_process;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -249,48 +250,111 @@ pub async fn reset_cursor_machine_id() -> ResetResult {
 
 #[tauri::command]
 pub async fn reset_machine_ids_standalone() -> ResetResult {
-    // 优先使用 workbench_inject 的重置（内存+磁盘），同时也执行原有的完整重置
-    match workbench_inject::perform_machine_reset() {
-        Ok(ids) => {
-            // 同时执行其他文件重置（machineId files, 注册表等）
-            let cursor_dir = utils::get_cursor_data_dir();
-            if let Some(ref dir) = cursor_dir {
-                if dir.exists() {
-                    reset_machine_id_files(dir);
-                    #[cfg(target_os = "windows")]
-                    {
-                        use std::os::windows::process::CommandExt;
-                        const CREATE_NO_WINDOW: u32 = 0x08000000;
-                        let machine_guid = Uuid::new_v4().to_string();
-                        let _ = std::process::Command::new("reg")
-                            .args([
-                                "add",
-                                "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography",
-                                "/v", "MachineGuid",
-                                "/t", "REG_SZ",
-                                "/d", &machine_guid,
-                                "/f",
-                            ])
-                            .creation_flags(CREATE_NO_WINDOW)
-                            .output();
-                    }
-                }
-            }
-            let mut new_ids_map = serde_json::Map::new();
-            new_ids_map.insert(utils::keys::telem_machine(), serde_json::json!(ids.machine_id));
-            new_ids_map.insert(utils::keys::telem_mac(), serde_json::json!(ids.mac_machine_id));
-            new_ids_map.insert(utils::keys::telem_dev(), serde_json::json!(ids.dev_device_id));
-            new_ids_map.insert(utils::keys::telem_sqm(), serde_json::json!(ids.sqm_id));
-            ResetResult {
-                success: true,
-                message: Some("机器码重置成功（内存+磁盘）".to_string()),
-                error: None,
-                new_ids: Some(serde_json::Value::Object(new_ids_map)),
+    // 关键修复：Cursor 运行时持有 state.vscdb 的 SQLite 锁，
+    // 直接写入要么失败、要么在 Cursor 退出时被覆盖回旧值。
+    // 与参考实现 _do_reset_machine 的 "exit_cursor → reset → clear cache" 顺序对齐。
+    let cursor_running = cursor_process::is_cursor_running();
+    if cursor_running {
+        println!("[reset] 检测到 Cursor 正在运行，先 kill 释放文件锁...");
+        cursor_process::kill_cursor();
+        // 等 Cursor 完全退出 + Windows 文件句柄释放（最多 6 秒）
+        for i in 0..6 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if !cursor_process::is_cursor_running() {
+                println!("[reset] Cursor 已退出（耗时 {}s）", i + 1);
+                break;
             }
         }
-        Err(_) => {
-            // fallback 到原有的磁盘重置
-            perform_full_machine_id_reset()
+        // 再等 1s 让 OS 真正释放 SQLite 句柄（Windows 滞后）
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    // 生成 ID + 写磁盘（machineId / storage.json / state.vscdb，全部带重试）
+    let ids = match workbench_inject::perform_machine_reset() {
+        Ok(ids) => ids,
+        Err(e) => {
+            // fallback 到原有的磁盘重置（与旧版兼容）
+            eprintln!("[reset] perform_machine_reset 失败: {}，fallback", e);
+            return perform_full_machine_id_reset();
         }
+    };
+
+    // 额外重置：machineId 系列文件（machineid / deviceid 别名）+ Windows 注册表 MachineGuid
+    let cursor_dir = utils::get_cursor_data_dir();
+    if let Some(ref dir) = cursor_dir {
+        if dir.exists() {
+            reset_machine_id_files(dir);
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                let machine_guid = Uuid::new_v4().to_string();
+                let _ = std::process::Command::new("reg")
+                    .args([
+                        "add",
+                        "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography",
+                        "/v", "MachineGuid",
+                        "/t", "REG_SZ",
+                        "/d", &machine_guid,
+                        "/f",
+                    ])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+            }
+        }
+    }
+
+    // 验证：读回 state.vscdb 确认 telemetry.devDeviceId 真的变成新 ID
+    let verify_ok = verify_state_vscdb(&ids.dev_device_id);
+    if !verify_ok {
+        eprintln!("[reset] ⚠️ state.vscdb 验证失败，写入可能未持久化");
+    } else {
+        println!("[reset] ✅ state.vscdb 验证通过");
+    }
+
+    let mut new_ids_map = serde_json::Map::new();
+    new_ids_map.insert(utils::keys::telem_machine(), serde_json::json!(ids.machine_id));
+    new_ids_map.insert(utils::keys::telem_mac(), serde_json::json!(ids.mac_machine_id));
+    new_ids_map.insert(utils::keys::telem_dev(), serde_json::json!(ids.dev_device_id));
+    new_ids_map.insert(utils::keys::telem_sqm(), serde_json::json!(ids.sqm_id));
+
+    let msg = if cursor_running {
+        "机器码重置成功，请重新打开 Cursor".to_string()
+    } else {
+        "机器码重置成功".to_string()
+    };
+
+    ResetResult {
+        success: verify_ok,
+        message: Some(msg),
+        error: if verify_ok { None } else { Some("state.vscdb 验证失败，请关闭 Cursor 后重试".to_string()) },
+        new_ids: Some(serde_json::Value::Object(new_ids_map)),
+    }
+}
+
+/// 读回 state.vscdb 验证 telemetry.devDeviceId 已变成新值
+fn verify_state_vscdb(expected_dev_id: &str) -> bool {
+    let cursor_dir = match utils::get_cursor_data_dir() {
+        Some(d) => d,
+        None => return false,
+    };
+    let vscdb = cursor_dir.join("User").join("globalStorage").join("state.vscdb");
+    if !vscdb.exists() {
+        return false;
+    }
+    match rusqlite::Connection::open(&vscdb) {
+        Ok(conn) => {
+            let key = utils::keys::telem_dev();
+            let row: Result<String, _> = conn.query_row(
+                "SELECT value FROM ItemTable WHERE key = ?1",
+                rusqlite::params![key],
+                |r| r.get(0),
+            );
+            match row {
+                Ok(v) => v == expected_dev_id,
+                Err(_) => false,
+            }
+        }
+        Err(_) => false,
     }
 }

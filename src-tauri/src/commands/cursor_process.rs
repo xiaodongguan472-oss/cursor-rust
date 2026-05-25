@@ -19,7 +19,7 @@ pub struct ProcessResult {
     pub workspace: Option<String>,
 }
 
-fn is_cursor_running() -> bool {
+pub fn is_cursor_running() -> bool {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -80,7 +80,7 @@ fn is_cursor_running() -> bool {
     }
 }
 
-fn kill_cursor() -> bool {
+pub fn kill_cursor() -> bool {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
