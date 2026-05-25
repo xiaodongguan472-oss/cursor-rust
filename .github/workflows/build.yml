@@ -128,10 +128,13 @@ jobs:
 
           # 1. 剥离符号表（反逆向）
           echo "=== Stripping symbols ==="
-          BINARY_NAME=$(defaults read "$APP_FILE/Contents/Info.plist" CFBundleExecutable)
-          BINARY_PATH="$APP_FILE/Contents/MacOS/$BINARY_NAME"
+          # 直接从 MacOS 目录获取二进制文件（避免中文路径 plist 读取问题）
+          BINARY_PATH=$(find "$APP_FILE/Contents/MacOS" -type f -perm +111 | head -1)
+          if [ -z "$BINARY_PATH" ]; then
+            BINARY_PATH="$APP_FILE/Contents/MacOS/续杯助手"
+          fi
           echo "Binary: $BINARY_PATH"
-          ls -lh "$BINARY_PATH"
+          ls -lh "$BINARY_PATH" || true
           
           # strip -x: 移除本地符号，保留动态链接符号
           # strip -S: 移除调试符号
