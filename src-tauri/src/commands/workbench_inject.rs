@@ -6,6 +6,8 @@ use sha2::{Sha256, Sha512, Digest};
 use uuid::Uuid;
 use rand::Rng;
 use super::utils;
+#[allow(unused_imports)]
+use super::cursor_paths;
 
 // ========== 常量 ==========
 
