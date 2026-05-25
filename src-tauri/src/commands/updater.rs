@@ -275,6 +275,7 @@ try {{
         let sh_content = format!(
             r#"#!/bin/bash
 set -e
+export LANG=en_US.UTF-8
 
 PID_TO_WAIT="{pid}"
 DMG_PATH="{archive}"
@@ -285,7 +286,7 @@ CURRENT_EXE="{target}"
 APP_PATH="$(echo "$CURRENT_EXE" | sed 's|/Contents/MacOS/.*||')"
 APP_NAME="$(basename "$APP_PATH")"
 APP_DIR="$(dirname "$APP_PATH")"
-MOUNT_POINT="/Volumes/续杯助手_update_$$"
+MOUNT_POINT="/Volumes/CursorRenewalUpdate_$$"
 
 cleanup() {{
   hdiutil detach "$MOUNT_POINT" 2>/dev/null || true
