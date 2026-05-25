@@ -115,7 +115,7 @@ jobs:
         if: runner.os == 'macOS'
         run: tauri build --target ${{ matrix.target }}
 
-      - name: Ad-hoc sign + create DMG
+      - name: Strip symbols + Ad-hoc sign + create DMG
         if: runner.os == 'macOS'
         run: |
           APP_DIR="src-tauri/target/${{ matrix.target }}/release/bundle/macos"
@@ -126,18 +126,36 @@ jobs:
             exit 1
           fi
 
-          # 1. Ad-hoc 签名（让 macOS 显示"无法验证"而非"已损坏"）
+          # 1. 剥离符号表（反逆向）
+          echo "=== Stripping symbols ==="
+          BINARY_NAME=$(defaults read "$APP_FILE/Contents/Info.plist" CFBundleExecutable)
+          BINARY_PATH="$APP_FILE/Contents/MacOS/$BINARY_NAME"
+          echo "Binary: $BINARY_PATH"
+          ls -lh "$BINARY_PATH"
+          
+          # strip -x: 移除本地符号，保留动态链接符号
+          # strip -S: 移除调试符号
+          strip -x -S "$BINARY_PATH" 2>/dev/null || true
+          
+          # 额外清理：移除 .dSYM 调试符号目录
+          rm -rf "$APP_FILE.dSYM" 2>/dev/null || true
+          rm -rf "$APP_DIR"/*.dSYM 2>/dev/null || true
+          
+          echo "After strip:"
+          ls -lh "$BINARY_PATH"
+
+          # 2. Ad-hoc 签名（让 macOS 显示"无法验证"而非"已损坏"）
           echo "=== Ad-hoc signing: $APP_FILE ==="
           codesign --force --deep --sign - "$APP_FILE"
           codesign --verify "$APP_FILE" && echo "✓ Signature valid"
 
-          # 2. 安装 create-dmg
+          # 3. 安装 create-dmg
           brew install create-dmg || true
 
-          # 3. 生成 DMG 背景图片
+          # 4. 生成 DMG 背景图片
           bash scripts/create-dmg-background.sh /tmp/dmg-background.png
 
-          # 4. 使用 create-dmg 创建美观的 DMG
+          # 5. 使用 create-dmg 创建美观的 DMG
           APP_NAME=$(basename "$APP_FILE" .app)
           DMG_OUT="${{ matrix.output_name }}"
 
