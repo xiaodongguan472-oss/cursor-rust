@@ -410,6 +410,35 @@
 
     }
 
+    .step-tutorial-btn {
+      position: absolute;
+      top: 12px;
+      right: 16px;
+      padding: 4px 10px;
+      font-size: 11px;
+      color: #fff;
+      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+      white-space: nowrap;
+    }
+
+    .step-tutorial-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    }
+
+    .step-tutorial-btn.video {
+      background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+      box-shadow: 0 2px 8px rgba(249, 115, 22, 0.3);
+    }
+
+    .step-tutorial-btn.video:hover {
+      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4);
+    }
+
     .step-number {
 
       position: absolute;
@@ -4561,6 +4590,8 @@
 
             <div class="step-desc">点击右上角设置按钮输入授权码，验证通过后即可使用续杯功能。</div>
 
+            <div class="step-tutorial-btn" @click="openTutorial('doc')" title="查看文档教程">去看文档教程</div>
+
           </div>
 
 
@@ -4574,6 +4605,8 @@
             <div class="step-title">无感换号</div>
 
             <div class="step-desc">激活成功后，开启激活无感换号开关，点击"无感换号"按钮（首次要重启cursor），如果需要"自动换号"，请开启自动换号开关（不要关闭程序）</div>
+
+            <div class="step-tutorial-btn video" @click="openTutorial('video')" title="查看视频教程">去看视频教程</div>
 
           </div>
 
@@ -6342,6 +6375,12 @@
 
             hasAgreed: false, // 是否已同意协议
 
+            // ========== 教程链接 ==========
+            tutorialLinks: {
+              windows: { video: '', doc: '' },
+              mac: { video: '', doc: '' }
+            },
+
             // ========== 无感换号相关 ==========
 
             ehPatched: false,             // ExtensionHost 补丁是否已注入
@@ -7205,7 +7244,8 @@
 
               await this.checkVersionUpdate();
 
-
+              // 加载教程链接（不阻塞，后台执行）
+              this.loadTutorialLinks();
 
               // 所有初始化完成
 
@@ -11067,6 +11107,68 @@
               v = v.slice(0, -2);
             }
             return v;
+          },
+
+          // 加载教程链接
+          async loadTutorialLinks() {
+            const apiBase = 'https://www.xxdlzs.top/csk';
+            // 统一的默认链接（获取失败时使用）
+            const fallbackUrl = 'https://www.yuque.com/dongxiao-f0zme/vx4792/ibxm810wgqgiqorn?singleDoc#';
+            
+            // 辅助函数：获取单个教程链接
+            const fetchTutorialLink = async (systemType, category, defaultUrl) => {
+              try {
+                const res = await fetch(`${apiBase}/cursordownload/systemType/${systemType}/category/${category}`);
+                const data = await res.json();
+                if (data.code === '200' && data.data && data.data.length > 0 && data.data[0].downloadUrl) {
+                  return data.data[0].downloadUrl;
+                }
+                return defaultUrl;
+              } catch (e) {
+                console.error(`[教程链接] 获取 ${systemType}/${category} 失败:`, e);
+                return defaultUrl;
+              }
+            };
+            
+            // Windows 视频教程
+            this.tutorialLinks.windows.video = await fetchTutorialLink(
+              'windows', 'tutorial_video',
+              'https://www.bilibili.com/video/BV1WfgQzcEyU/?share_source=copy_web&vd_source=91b43c9eeeb72b62081fc45079b2e6e3'
+            );
+            
+            // Windows 文档教程
+            this.tutorialLinks.windows.doc = await fetchTutorialLink(
+              'windows', 'tutorial_doc',
+              fallbackUrl
+            );
+            
+            // Mac 视频教程
+            this.tutorialLinks.mac.video = await fetchTutorialLink(
+              'mac', 'tutorial_video',
+              'https://www.bilibili.com/video/BV1PfgQzcEQN/?share_source=copy_web&vd_source=91b43c9eeeb72b62081fc45079b2e6e3'
+            );
+            
+            // Mac 文档教程
+            this.tutorialLinks.mac.doc = await fetchTutorialLink(
+              'mac', 'tutorial_doc',
+              fallbackUrl
+            );
+            
+            console.log('[教程链接] 加载完成:', this.tutorialLinks);
+          },
+
+          // 打开教程（根据当前系统自动选择 Windows/Mac）
+          openTutorial(type) {
+            // 检测当前系统
+            const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+            const system = isMac ? 'mac' : 'windows';
+            const url = this.tutorialLinks[system][type];
+            
+            if (url) {
+              window.open(url, '_blank');
+            } else {
+              ElMessage.warning('教程链接正在加载中，请稍后再试');
+            }
           },
 
           // 比较版本号（返回 -1: v1<v2, 0: v1=v2, 1: v1>v2）

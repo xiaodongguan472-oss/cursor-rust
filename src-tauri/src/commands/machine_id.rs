@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use uuid::Uuid;
 use super::utils;
+use super::workbench_inject;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -234,10 +235,62 @@ pub fn perform_full_machine_id_reset() -> ResetResult {
 
 #[tauri::command]
 pub async fn reset_cursor_machine_id() -> ResetResult {
-    reset_storage_machine_ids()
+    // 使用新的 5 字段重置（内存+磁盘），fallback 到旧逻辑
+    match workbench_inject::perform_machine_reset() {
+        Ok(_) => ResetResult {
+            success: true,
+            message: Some("机器码重置成功".to_string()),
+            error: None,
+            new_ids: None,
+        },
+        Err(_) => reset_storage_machine_ids(),
+    }
 }
 
 #[tauri::command]
 pub async fn reset_machine_ids_standalone() -> ResetResult {
-    perform_full_machine_id_reset()
+    // 优先使用 workbench_inject 的重置（内存+磁盘），同时也执行原有的完整重置
+    match workbench_inject::perform_machine_reset() {
+        Ok(ids) => {
+            // 同时执行其他文件重置（machineId files, 注册表等）
+            let cursor_dir = utils::get_cursor_data_dir();
+            if let Some(ref dir) = cursor_dir {
+                if dir.exists() {
+                    reset_machine_id_files(dir);
+                    #[cfg(target_os = "windows")]
+                    {
+                        use std::os::windows::process::CommandExt;
+                        const CREATE_NO_WINDOW: u32 = 0x08000000;
+                        let machine_guid = Uuid::new_v4().to_string();
+                        let _ = std::process::Command::new("reg")
+                            .args([
+                                "add",
+                                "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography",
+                                "/v", "MachineGuid",
+                                "/t", "REG_SZ",
+                                "/d", &machine_guid,
+                                "/f",
+                            ])
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .output();
+                    }
+                }
+            }
+            let mut new_ids_map = serde_json::Map::new();
+            new_ids_map.insert(utils::keys::telem_machine(), serde_json::json!(ids.machine_id));
+            new_ids_map.insert(utils::keys::telem_mac(), serde_json::json!(ids.mac_machine_id));
+            new_ids_map.insert(utils::keys::telem_dev(), serde_json::json!(ids.dev_device_id));
+            new_ids_map.insert(utils::keys::telem_sqm(), serde_json::json!(ids.sqm_id));
+            ResetResult {
+                success: true,
+                message: Some("机器码重置成功（内存+磁盘）".to_string()),
+                error: None,
+                new_ids: Some(serde_json::Value::Object(new_ids_map)),
+            }
+        }
+        Err(_) => {
+            // fallback 到原有的磁盘重置
+            perform_full_machine_id_reset()
+        }
+    }
 }

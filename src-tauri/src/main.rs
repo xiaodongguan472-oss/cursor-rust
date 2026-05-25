@@ -17,6 +17,9 @@ fn main() {
     // 数据迁移：从旧版 Electron 目录 (cursor-renewal-client) 迁移到新版 (cursor-renewal)
     commands::utils::migrate_legacy_data();
 
+    // 启动时自动检测：如果 workbench 已注入，则启动本地HTTP服务
+    commands::workbench_inject::auto_start_if_patched();
+
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             ipc::x0a, ipc::x0b, ipc::x0c,
@@ -32,7 +35,7 @@ fn main() {
             ipc::xa1,
             ipc::xb1, ipc::xb2,
             ipc::xc1, ipc::xc2, ipc::xc3, ipc::xc4, ipc::xc5, ipc::xc6,
-            ipc::xc7, ipc::xc8, ipc::xc9, ipc::xca, ipc::xcb, ipc::xcc,
+            ipc::xc7, ipc::xc8, ipc::xc9, ipc::xca, ipc::xcb, ipc::xcc, ipc::xcd,
             ipc::xd1, ipc::xd2,
             ipc::xe1,
             ipc::xf1, ipc::xf2, ipc::xf3,

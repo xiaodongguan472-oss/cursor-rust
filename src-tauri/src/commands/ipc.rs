@@ -257,6 +257,17 @@ pub async fn xcb(app: tauri::AppHandle, enabled: bool, card_code: Option<String>
 pub async fn xcc() -> serde_json::Value {
     seamless_switch::get_auto_switch_status().await
 }
+#[tauri::command]
+pub async fn xcd() -> serde_json::Value {
+    let s = workbench_inject::get_inject_status();
+    serde_json::json!({
+        "jsConnected": s.js_connected,
+        "storeCaptured": s.store_captured,
+        "lastHeartbeat": s.last_heartbeat,
+        "lastResetAck": s.last_reset_ack,
+        "resetCount": s.reset_count,
+    })
+}
 
 // === Workspace ===
 #[tauri::command]

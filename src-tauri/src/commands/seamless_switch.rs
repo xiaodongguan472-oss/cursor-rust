@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use tauri::{AppHandle, Manager};
 use super::utils;
 use super::cursor_paths;
-use super::machine_id;
+use super::workbench_inject;
 
 static AUTO_SWITCH_ENABLED: AtomicBool = AtomicBool::new(false);
 static AUTO_SWITCH_BUSY: AtomicBool = AtomicBool::new(false);
@@ -408,11 +408,22 @@ async fn do_check_account_status(token: &str) -> serde_json::Value {
     })
 }
 
+#[allow(dead_code)]
 async fn do_seamless_switch(
     db_path: &str,
     email: &str,
     access_token: &str,
     refresh_token: &str,
+) -> serde_json::Value {
+    do_seamless_switch_with_id(db_path, email, access_token, refresh_token, None).await
+}
+
+async fn do_seamless_switch_with_id(
+    db_path: &str,
+    email: &str,
+    access_token: &str,
+    refresh_token: &str,
+    machine_id_override: Option<&str>,
 ) -> serde_json::Value {
     // Write active token
     do_write_active_token(access_token);
@@ -432,11 +443,14 @@ async fn do_seamless_switch(
         }
     };
 
-    // Generate new telemetry machine ID (sha256 hex 格式，与 Cursor 原生一致)
-    let new_machine_id = {
-        let mut hasher = Sha256::new();
-        hasher.update(rand::random::<[u8; 32]>());
-        hex::encode(hasher.finalize())
+    // 使用传入的 machineId 或自动生成（sha256 hex 格式，与 Cursor 原生一致）
+    let new_machine_id = match machine_id_override {
+        Some(id) => id.to_string(),
+        None => {
+            let mut hasher = Sha256::new();
+            hasher.update(rand::random::<[u8; 32]>());
+            hex::encode(hasher.finalize())
+        }
     };
 
     // SQLite 字段名 obfstr 加密：反编译看 .rdata 看不到 cursorAuth/* / telemetry.* 明文
@@ -493,7 +507,23 @@ pub async fn patch_ext_host() -> serde_json::Value {
         }
     };
     let install_path = cursor_paths::get_cursor_install_from_base_path(&base_path);
-    do_patch_ext_host(&install_path)
+    let eh_result = do_patch_ext_host(&install_path);
+
+    // 同时注入 workbench.desktop.main.js（机器码内存重置）
+    let wb_result = workbench_inject::patch_workbench(&base_path);
+    // 启动本地HTTP服务（供注入JS轮询机器码状态）
+    workbench_inject::start_local_server();
+
+    // 合并结果
+    let eh_ok = eh_result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let wb_ok = wb_result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    serde_json::json!({
+        "success": eh_ok,
+        "patched": eh_ok,
+        "wbPatched": wb_ok,
+        "wbError": if wb_ok { serde_json::Value::Null } else { wb_result.get("error").cloned().unwrap_or(serde_json::Value::Null) },
+    })
 }
 
 #[tauri::command]
@@ -509,6 +539,9 @@ pub async fn unpatch_ext_host() -> serde_json::Value {
         }
     };
     let install_path = cursor_paths::get_cursor_install_from_base_path(&base_path);
+    // 同时移除 workbench 注入
+    workbench_inject::unpatch_workbench(&base_path);
+    workbench_inject::stop_local_server();
     do_unpatch_ext_host(&install_path)
 }
 
@@ -557,11 +590,17 @@ pub async fn seamless_switch_cmd(
     access_token: String,
     refresh_token: String,
 ) -> serde_json::Value {
-    let result = do_seamless_switch(&db_path, &email, &access_token, &refresh_token).await;
+    // 先生成机器码，确保 SQLite 和 磁盘/内存使用同一套 ID
+    let ids = workbench_inject::generate_machine_ids();
+    let result = do_seamless_switch_with_id(
+        &db_path, &email, &access_token, &refresh_token,
+        Some(&ids.machine_id),
+    ).await;
 
-    // Reset machine IDs after successful switch
+    // 写磁盘 + 推送内存
     if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-        let _ = machine_id::perform_full_machine_id_reset();
+        let _ = workbench_inject::update_disk_files(&ids);
+        workbench_inject::push_ids_to_js(&ids);
     }
 
     result
@@ -607,12 +646,17 @@ pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json:
         return serde_json::json!({"success": false, "error": "后端返回的账号信息不完整"});
     }
 
-    // 3. Execute seamless switch
-    let switch_result = do_seamless_switch(&db_path, email, token, token).await;
+    // 3. 生成机器码 + 执行无感换号
+    let ids = workbench_inject::generate_machine_ids();
+    let switch_result = do_seamless_switch_with_id(
+        &db_path, email, token, token,
+        Some(&ids.machine_id),
+    ).await;
 
-    // 4. Reset machine IDs
+    // 4. 写磁盘 + 推送内存
     if switch_result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-        let _ = machine_id::perform_full_machine_id_reset();
+        let _ = workbench_inject::update_disk_files(&ids);
+        workbench_inject::push_ids_to_js(&ids);
     }
 
     let mut result = switch_result;
@@ -751,19 +795,24 @@ async fn usage_monitor_poll(app: &AppHandle) {
         }
     };
 
-    // 2. 执行无感换号
+    // 2. 生成机器码 + 执行无感换号
+    let ids = workbench_inject::generate_machine_ids();
     let db_path = utils::get_cursor_db_path()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    let switch_result = do_seamless_switch(&db_path, &email, &new_token, &new_token).await;
+    let switch_result = do_seamless_switch_with_id(
+        &db_path, &email, &new_token, &new_token,
+        Some(&ids.machine_id),
+    ).await;
     let switch_ok = switch_result
         .get("success")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // 3. 重置机器码
+    // 3. 写磁盘 + 推送内存
     if switch_ok {
-        let _ = machine_id::perform_full_machine_id_reset();
+        let _ = workbench_inject::update_disk_files(&ids);
+        workbench_inject::push_ids_to_js(&ids);
     }
 
     let _ = app.emit_all(
@@ -818,15 +867,20 @@ pub async fn toggle_auto_switch(
             }
         };
 
-        // 1. 注入 ExtHost 补丁
+        // 1. 注入 ExtHost 补丁 + Workbench 机器码注入
         let paths = cursor_paths::get_cursor_paths();
         if let Some(ref bp) = paths.base_path {
             if paths.error.is_none() {
                 let install_path = cursor_paths::get_cursor_install_from_base_path(bp);
                 do_unpatch_ext_host(&install_path);
                 do_patch_ext_host(&install_path);
+                // 注入 workbench.desktop.main.js（机器码内存重置）
+                workbench_inject::patch_workbench(bp);
             }
         }
+
+        // 启动本地HTTP服务（供注入JS轮询机器码状态）
+        workbench_inject::start_local_server();
 
         // 2. 保存 card_code
         if let Ok(mut guard) = AUTO_SWITCH_CARD_CODE.lock() {
@@ -848,6 +902,8 @@ pub async fn toggle_auto_switch(
         if let Ok(mut guard) = AUTO_SWITCH_CARD_CODE.lock() {
             *guard = None;
         }
+        // 停止本地HTTP服务
+        workbench_inject::stop_local_server();
         serde_json::json!({"success": true, "enabled": false})
     }
 }
