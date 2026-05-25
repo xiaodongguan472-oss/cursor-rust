@@ -10751,13 +10751,26 @@
 
               const result = await ipcRenderer.invoke('x2c');
 
+              // 控制台打印详细步骤日志
+              if (result && result.details && result.details.length > 0) {
+                console.log('[机器码重置] 执行详情:');
+                result.details.forEach(d => console.log('  ' + d));
+              }
+
               if (result && result.success) {
 
                 ElMessage.success(result.message || '机器码重置成功，重启 Cursor 后生效');
 
               } else {
 
-                ElMessage.error('重置失败: ' + (result?.error || '未知错误'));
+                // 失败时弹出详细对话框，显示每一步的结果
+                const details = (result?.details || []).join('\n');
+                const errorMsg = result?.error || '未知错误';
+                ElMessageBox.alert(
+                  `<div style="font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 400px; overflow-y: auto;">${details || errorMsg}</div>`,
+                  '重置机器码 - 执行详情',
+                  { confirmButtonText: '确定', type: 'warning', dangerouslyUseHTMLString: true }
+                ).catch(() => {});
 
               }
 

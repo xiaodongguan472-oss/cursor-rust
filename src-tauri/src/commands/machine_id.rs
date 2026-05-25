@@ -13,6 +13,9 @@ pub struct ResetResult {
     pub message: Option<String>,
     pub error: Option<String>,
     pub new_ids: Option<serde_json::Value>,
+    /// 每一步的执行结果（与 MyCursor details 字段对齐）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub details: Vec<String>,
 }
 
 #[tauri::command]
@@ -79,7 +82,14 @@ impl FullMachineIds {
     }
 }
 
-/// Reset storage.json machine IDs（写入完整 7 个字段，对齐 MyCursor 完全重置）
+/// Reset storage.json machine IDs（1:1 对齐 MyCursor：原子写入 + 5 核心字段）
+///
+/// 写入字段（与 MyCursor write_machine_ids 完全一致 + 我们补充的 2 个 telemetry 字段）：
+/// - telemetry.devDeviceId
+/// - telemetry.macMachineId
+/// - telemetry.machineId
+/// - telemetry.sqmId
+/// - storage.serviceMachineId（关键的后端识别字段）
 fn reset_storage_machine_ids_with(ids: &FullMachineIds) -> ResetResult {
     let storage_path = match utils::get_cursor_storage_json_path() {
         Some(p) => p,
@@ -89,6 +99,7 @@ fn reset_storage_machine_ids_with(ids: &FullMachineIds) -> ResetResult {
                 message: None,
                 error: Some("无法确定storage.json路径".to_string()),
                 new_ids: None,
+                details: vec![],
             };
         }
     };
@@ -99,6 +110,7 @@ fn reset_storage_machine_ids_with(ids: &FullMachineIds) -> ResetResult {
             message: None,
             error: Some(format!("未找到配置文件: {}", storage_path.display())),
             new_ids: None,
+            details: vec![],
         };
     }
 
@@ -111,30 +123,41 @@ fn reset_storage_machine_ids_with(ids: &FullMachineIds) -> ResetResult {
     );
     let _ = fs::copy(&storage_path, backup_dir.join(&backup_name));
 
-    let result = utils::safe_modify_file(&storage_path, || {
+    // macOS: 清除 chflags uchg/schg
+    utils::clear_macos_immutable_flag(&storage_path);
+
+    // 读取现有 storage.json
+    let result: Result<(), String> = (|| {
         let content = fs::read_to_string(&storage_path)
             .map_err(|e| format!("读取storage.json失败: {}", e))?;
         let mut config: serde_json::Value = serde_json::from_str(&content)
             .map_err(|e| format!("解析storage.json失败: {}", e))?;
 
         if let Some(obj) = config.as_object_mut() {
-            // telemetry.* 系列（5 个字段）
+            // === 5 核心字段（与 MyCursor write_machine_ids 完全一致）===
             obj.insert(utils::keys::telem_machine(), serde_json::json!(ids.machine_id));
             obj.insert(utils::keys::telem_mac(), serde_json::json!(ids.mac_machine_id));
             obj.insert(utils::keys::telem_dev(), serde_json::json!(ids.dev_device_id));
             obj.insert(utils::keys::telem_sqm(), serde_json::json!(ids.sqm_id));
+            obj.insert(utils::keys::storage_service_machine(), serde_json::json!(ids.service_machine_id));
+            // === 额外补充字段（不在 MyCursor 写入列表中，但属于安全冗余）===
             obj.insert(utils::keys::telem_machine_guid(), serde_json::json!(ids.machine_guid));
             obj.insert(utils::keys::telem_sqm_client(), serde_json::json!(ids.sqm_client_id));
-            // storage.serviceMachineId（最关键的后端识别字段）
-            obj.insert(utils::keys::storage_service_machine(), serde_json::json!(ids.service_machine_id));
         }
 
         let updated = serde_json::to_string_pretty(&config)
             .map_err(|e| format!("序列化storage.json失败: {}", e))?;
-        fs::write(&storage_path, updated)
-            .map_err(|e| format!("写入storage.json失败: {}", e))?;
+
+        // === 原子写入（与 MyCursor write_all 完全一致）===
+        // 1. 写到 .tmp 临时文件
+        // 2. rename 原子替换
+        let tmp = storage_path.with_extension("json.tmp");
+        fs::write(&tmp, &updated)
+            .map_err(|e| format!("写入临时文件失败: {}", e))?;
+        fs::rename(&tmp, &storage_path)
+            .map_err(|e| format!("替换storage.json失败: {}", e))?;
         Ok(())
-    });
+    })();
 
     match result {
         Ok(()) => ResetResult {
@@ -142,12 +165,14 @@ fn reset_storage_machine_ids_with(ids: &FullMachineIds) -> ResetResult {
             message: Some("storage.json机器码重置成功".to_string()),
             error: None,
             new_ids: Some(ids.to_json_value()),
+            details: vec![format!("storage.json 已更新: {}", storage_path.display())],
         },
         Err(e) => ResetResult {
             success: false,
             message: None,
-            error: Some(e),
+            error: Some(e.clone()),
             new_ids: None,
+            details: vec![format!("storage.json 写入失败: {}", e)],
         },
     }
 }
@@ -254,6 +279,7 @@ pub fn perform_full_machine_id_reset() -> ResetResult {
                 message: None,
                 error: Some("Cursor数据目录不存在".to_string()),
                 new_ids: None,
+                details: vec![],
             };
         }
     };
@@ -264,87 +290,125 @@ pub fn perform_full_machine_id_reset() -> ResetResult {
             message: None,
             error: Some(format!("Cursor数据目录不存在: {}", cursor_dir.display())),
             new_ids: None,
+            details: vec![],
         };
     }
 
     // 生成一组完整的 ID（所有位置共用同一组）
     let ids = FullMachineIds::generate();
+    let mut details: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    // 1. 写入 storage.json（7 个字段）
+    details.push(format!("[步骤1] 生成新 Machine ID: dev={}, machine={}...",
+        &ids.dev_device_id[..8.min(ids.dev_device_id.len())],
+        &ids.machine_id[..8.min(ids.machine_id.len())]));
+
+    // === 步骤 2: 写入 storage.json ===
     let storage_result = reset_storage_machine_ids_with(&ids);
-    if !storage_result.success {
-        if let Some(ref e) = storage_result.error {
-            warnings.push(format!("storage.json: {}", e));
+    if storage_result.success {
+        details.push("[步骤2] storage.json 写入成功".to_string());
+    } else {
+        let err = storage_result.error.clone().unwrap_or_else(|| "未知错误".to_string());
+        details.push(format!("[步骤2] ✗ storage.json 写入失败: {}", err));
+        warnings.push(format!("storage.json: {}", err));
+    }
+
+    // === 步骤 3: 写入 state.vscdb ===
+    let db_path = cursor_dir.join("User").join("globalStorage").join("state.vscdb");
+    if !db_path.exists() {
+        details.push(format!("[步骤3] state.vscdb 不存在，跳过: {}", db_path.display()));
+    } else {
+        match update_sqlite_service_machine_id(&db_path, &ids.service_machine_id) {
+            Ok(()) => details.push("[步骤3] state.vscdb storage.serviceMachineId 写入成功".to_string()),
+            Err(e) => {
+                details.push(format!("[步骤3] ✗ state.vscdb 写入失败: {}", e));
+                warnings.push(format!("state.vscdb: {}", e));
+            }
         }
     }
 
-    // 2. 写入 state.vscdb 的 storage.serviceMachineId（关键：与 storage.json 保持同步）
-    let db_path = cursor_dir.join("User").join("globalStorage").join("state.vscdb");
-    if let Err(e) = update_sqlite_service_machine_id(&db_path, &ids.service_machine_id) {
-        warnings.push(format!("state.vscdb: {}", e));
-    }
-
-    // 3. 写入 cursor_dir/machineId 文件（dev_device_id）
+    // === 步骤 4: 写入 machineId 文件 ===
     let machine_id_file = cursor_dir.join("machineId");
     utils::clear_macos_immutable_flag(&machine_id_file);
     if let Some(parent) = machine_id_file.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let _ = fs::write(&machine_id_file, &ids.dev_device_id);
+    match fs::write(&machine_id_file, &ids.dev_device_id) {
+        Ok(()) => details.push(format!("[步骤4] machineId 文件已写入: {}", machine_id_file.display())),
+        Err(e) => {
+            details.push(format!("[步骤4] ✗ machineId 文件写入失败: {}", e));
+            warnings.push(format!("machineId 文件: {}", e));
+        }
+    }
 
-    // 4. 写入其他 machine ID 散落文件
+    // === 步骤 5: 写入其他散落 machineId 文件 ===
     reset_machine_id_files(&cursor_dir);
+    details.push("[步骤5] 散落 machineId 文件已重置".to_string());
 
-    // 5. Windows: 更新注册表中的 MachineGuid 和 SQMClient MachineId
+    // === 步骤 6: 平台相关系统级 ID ===
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut reg_results = Vec::new();
         // MachineGuid
-        let _ = std::process::Command::new("reg")
+        match std::process::Command::new("reg")
             .args([
-                "add",
-                "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography",
-                "/v",
-                "MachineGuid",
-                "/t",
-                "REG_SZ",
-                "/d",
-                &ids.machine_guid,
-                "/f",
+                "add", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography",
+                "/v", "MachineGuid", "/t", "REG_SZ", "/d", &ids.machine_guid, "/f",
             ])
             .creation_flags(CREATE_NO_WINDOW)
-            .output();
-        // SQMClient MachineId
-        let _ = std::process::Command::new("reg")
-            .args([
-                "add",
-                "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\SQMClient",
-                "/v",
-                "MachineId",
-                "/t",
-                "REG_SZ",
-                "/d",
-                &ids.sqm_client_id,
-                "/f",
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output();
-    }
-    // macOS / Linux 无系统级注册表，不做处理（与 MyCursor 行为一致）
-
-    // 6. 修补 main.js（最关键：去掉 ?? fallback，让 Cursor 永远使用 storage.json 里的新 ID）
-    let cursor_paths_info = cursor_paths::get_cursor_paths();
-    if let Some(main_path_str) = cursor_paths_info.main_path {
-        let main_path = Path::new(&main_path_str);
-        match cursor_modify::patch_main_js_file(main_path) {
-            Ok(true) => {}, // main.js 已修补
-            Ok(false) => {}, // main.js 之前已修补过或无需修补，正常情况
-            Err(e) => warnings.push(format!("main.js 修补失败: {}", e)),
+            .output()
+        {
+            Ok(o) if o.status.success() => reg_results.push("MachineGuid"),
+            _ => warnings.push("注册表 MachineGuid 写入失败（需要管理员权限）".to_string()),
         }
-    } else {
-        warnings.push("未找到 Cursor 安装路径，main.js 未修补".to_string());
+        // SQMClient MachineId
+        match std::process::Command::new("reg")
+            .args([
+                "add", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\SQMClient",
+                "/v", "MachineId", "/t", "REG_SZ", "/d", &ids.sqm_client_id, "/f",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            Ok(o) if o.status.success() => reg_results.push("SQMClient/MachineId"),
+            _ => warnings.push("注册表 SQMClient/MachineId 写入失败（需要管理员权限）".to_string()),
+        }
+        if !reg_results.is_empty() {
+            details.push(format!("[步骤6-Windows] 注册表已更新: {}", reg_results.join(", ")));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        details.push("[步骤6-macOS] 跳过系统级 ID（macOS 无注册表，与 MyCursor 行为一致）".to_string());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        details.push("[步骤6-Linux] 跳过系统级 ID".to_string());
+    }
+
+    // === 步骤 7: 修补 main.js（最关键的一步）===
+    let cursor_paths_info = cursor_paths::get_cursor_paths();
+    match cursor_paths_info.main_path {
+        Some(main_path_str) => {
+            let main_path = Path::new(&main_path_str);
+            details.push(format!("[步骤7] 找到 main.js: {}", main_path_str));
+            match cursor_modify::patch_main_js_file(main_path) {
+                Ok(true) => details.push("[步骤7] ✓ main.js 修补成功（移除 ?? 硬编码 fallback）".to_string()),
+                Ok(false) => details.push("[步骤7] main.js 无需修补（可能已修补过或正则未匹配）".to_string()),
+                Err(e) => {
+                    details.push(format!("[步骤7] ✗ main.js 修补失败: {}", e));
+                    warnings.push(format!("main.js 修补失败: {}", e));
+                }
+            }
+        }
+        None => {
+            let base_info = cursor_paths_info.base_path.unwrap_or_else(|| "未检测到".to_string());
+            details.push(format!("[步骤7] ✗ 未找到 main.js，base_path={}, error={:?}",
+                base_info, cursor_paths_info.error));
+            warnings.push("未找到 Cursor 安装路径，main.js 未修补（这会导致重置失效）".to_string());
+        }
     }
 
     let warning_msg = if warnings.is_empty() {
@@ -354,7 +418,7 @@ pub fn perform_full_machine_id_reset() -> ResetResult {
     };
 
     ResetResult {
-        success: true,
+        success: warnings.is_empty(),
         message: Some(if warning_msg.is_some() {
             "机器码已重置（部分步骤有警告），重启Cursor后生效".to_string()
         } else {
@@ -362,6 +426,7 @@ pub fn perform_full_machine_id_reset() -> ResetResult {
         }),
         error: warning_msg,
         new_ids: Some(ids.to_json_value()),
+        details,
     }
 }
 

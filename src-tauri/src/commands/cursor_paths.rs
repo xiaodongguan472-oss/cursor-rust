@@ -90,9 +90,27 @@ fn find_cursor_base_path(settings: &settings::AppSettings) -> Option<PathBuf> {
 
     #[cfg(target_os = "macos")]
     {
-        let default = PathBuf::from("/Applications/Cursor.app/Contents/Resources/app");
-        if default.exists() {
-            return Some(default);
+        // 系统级安装
+        let candidates = vec![
+            PathBuf::from("/Applications/Cursor.app/Contents/Resources/app"),
+            PathBuf::from("/Applications/cursor.app/Contents/Resources/app"),
+        ];
+        for c in &candidates {
+            if c.exists() {
+                return Some(c.clone());
+            }
+        }
+        // 用户级安装 ~/Applications/Cursor.app
+        if let Some(home) = dirs::home_dir() {
+            let user_candidates = [
+                home.join("Applications/Cursor.app/Contents/Resources/app"),
+                home.join("Applications/cursor.app/Contents/Resources/app"),
+            ];
+            for c in &user_candidates {
+                if c.exists() {
+                    return Some(c.clone());
+                }
+            }
         }
     }
 

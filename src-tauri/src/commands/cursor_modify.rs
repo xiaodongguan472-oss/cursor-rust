@@ -47,10 +47,14 @@ fn validate_cursor_file(content: &str) -> Result<(), String> {
 }
 
 /// 同步修补 main.js 文件，去掉 getMachineId/getMacMachineId 的 ?? fallback
-/// 返回 Ok(true) 表示修改了文件，Ok(false) 表示已经是修补过的状态，Err 表示失败
+///
+/// 1:1 对齐 MyCursor 的 modify_main_js：直接 read + replace + write，不做权限处理包装。
+/// macOS 上仅清除 chflags 不可变标志；权限不足由 std::fs::write 报错。
+///
+/// 返回 Ok(true) 表示修改了文件，Ok(false) 表示无需修补，Err 表示失败
 pub fn patch_main_js_file(main_path: &Path) -> Result<bool, String> {
     if !main_path.exists() {
-        return Err("文件不存在".to_string());
+        return Err(format!("文件不存在: {}", main_path.display()));
     }
 
     // Create backup
@@ -59,53 +63,49 @@ pub fn patch_main_js_file(main_path: &Path) -> Result<bool, String> {
         let _ = fs::copy(main_path, &backup_path);
     }
 
+    // macOS: 清除 chflags（仅对该文件；Cursor 安装目录通常不会有，但保险起见）
+    utils::clear_macos_immutable_flag(main_path);
+
     let content = fs::read_to_string(main_path).map_err(|e| format!("读取文件失败: {}", e))?;
 
-    let mut new_content = content.clone();
-    let mut modified = false;
-
-    // 严格模式：精确匹配 async getMachineId(){return ...??...}
+    // 与 MyCursor modify_main_js 完全一致的正则替换
     let patterns = [
         (r"async getMachineId\(\)\{return [^??]+\?\?([^}]+)\}", "async getMachineId(){return $1}"),
         (r"async getMacMachineId\(\)\{return [^??]+\?\?([^}]+)\}", "async getMacMachineId(){return $1}"),
     ];
 
+    let mut new_content = content.clone();
+    let mut modified = false;
     for (pattern, replacement) in &patterns {
         if let Ok(re) = regex::Regex::new(pattern) {
-            if re.is_match(&new_content) {
-                let before = new_content.clone();
-                new_content = re.replace_all(&new_content, *replacement).to_string();
-                if new_content != before {
-                    modified = true;
-                }
+            let after = re.replace_all(&new_content, *replacement).to_string();
+            if after != new_content {
+                new_content = after;
+                modified = true;
             }
         }
     }
 
-    // 宽松模式 fallback
+    // 宽松模式 fallback（用于较新版本 Cursor，函数签名可能不同）
     if !modified {
         if let Ok(re) = regex::Regex::new(r"(getMachineId[^{]*\{[^}]*?return\s+[^;]*?)(\?\?)([^;}]+)") {
-            if re.is_match(&new_content) {
-                let before = new_content.clone();
-                new_content = re.replace_all(&new_content, "$1$3").to_string();
-                if new_content != before {
-                    modified = true;
-                }
+            let after = re.replace_all(&new_content, "$1$3").to_string();
+            if after != new_content {
+                new_content = after;
+                modified = true;
             }
         }
     }
 
     if !modified {
-        // 已经修补过或不包含 getMachineId
+        // 已经修补过 或 当前版本不需要修补
         return Ok(false);
     }
 
     validate_cursor_file(&new_content).map_err(|e| format!("语法验证失败: {}", e))?;
 
-    let main_path_buf = main_path.to_path_buf();
-    utils::safe_modify_file(&main_path_buf, || {
-        fs::write(&main_path_buf, &new_content).map_err(|e| format!("写入文件失败: {}", e))
-    })?;
+    // === 直接写入，不做权限切换（与 MyCursor 完全一致）===
+    fs::write(main_path, &new_content).map_err(|e| format!("写入文件失败: {}（提示：macOS 下 /Applications/Cursor.app 可能需要管理员权限）", e))?;
 
     Ok(true)
 }
