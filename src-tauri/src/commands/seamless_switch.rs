@@ -495,7 +495,7 @@ async fn do_seamless_switch_with_id(
 // ========== Tauri commands ==========
 
 #[tauri::command]
-pub async fn patch_ext_host() -> serde_json::Value {
+pub async fn patch_ext_host(card_code: Option<String>) -> serde_json::Value {
     let paths = cursor_paths::get_cursor_paths();
     let base_path = match paths.base_path {
         Some(ref bp) if paths.error.is_none() => bp.clone(),
@@ -523,6 +523,18 @@ pub async fn patch_ext_host() -> serde_json::Value {
             false
         }
     };
+
+    // 设置自动换号上下文：当 JS 检测到 401/403/429 时，HTTP 服务器才能调后端拿新账号
+    // 与参考实现 cursor_page._do_inject 中调 seamless_server.set_api_client 等价
+    if let Some(code) = card_code {
+        if !code.is_empty() {
+            // 找到 state.vscdb 路径
+            let db_path = utils::get_cursor_db_path()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            workbench_inject::set_auto_switch_context(code, db_path);
+        }
+    }
 
     // 合并结果
     let eh_ok = eh_result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -553,6 +565,8 @@ pub async fn unpatch_ext_host() -> serde_json::Value {
     // 同时移除 workbench 注入
     workbench_inject::unpatch_workbench(&base_path);
     workbench_inject::stop_local_server();
+    // 清除自动换号上下文，避免残留导致后续误触发
+    workbench_inject::clear_auto_switch_context();
     do_unpatch_ext_host(&install_path)
 }
 

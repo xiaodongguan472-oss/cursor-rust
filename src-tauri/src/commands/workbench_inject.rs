@@ -28,6 +28,21 @@ static INJECT_STATUS: Mutex<InjectStatus> = Mutex::new(InjectStatus {
     reset_count: 0,
 });
 
+/// 自动换号上下文：保存换号需要的激活码 / 数据库路径 / 上次换号时间
+/// 由前端在「激活无感换号」时调用 set_auto_switch_context 写入
+static AUTO_SWITCH_CTX: Mutex<Option<AutoSwitchContext>> = Mutex::new(None);
+/// 自动换号互斥锁（同一时刻只允许一个换号在跑）
+static AUTO_SWITCH_RUNNING: AtomicBool = AtomicBool::new(false);
+/// 自动换号最小冷却时间（秒）— 与参考实现的 30s 一致
+const AUTO_SWITCH_COOLDOWN_SECS: u64 = 30;
+
+#[derive(Debug, Clone)]
+pub struct AutoSwitchContext {
+    pub card_code: String,
+    pub db_path: String,
+    pub last_switch_ts: u64,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InjectStatus {
     pub js_connected: bool,
@@ -235,6 +250,36 @@ pub fn update_seamless_state(
     }
 }
 
+/// 设置自动换号上下文（前端「激活无感换号」时调用）
+pub fn set_auto_switch_context(card_code: String, db_path: String) {
+    if let Ok(mut ctx) = AUTO_SWITCH_CTX.lock() {
+        *ctx = Some(AutoSwitchContext {
+            card_code,
+            db_path,
+            last_switch_ts: 0,
+        });
+    }
+}
+
+/// 清除自动换号上下文（前端「还原 Cursor」时调用）
+pub fn clear_auto_switch_context() {
+    if let Ok(mut ctx) = AUTO_SWITCH_CTX.lock() {
+        *ctx = None;
+    }
+}
+
+fn get_auto_switch_context() -> Option<AutoSwitchContext> {
+    AUTO_SWITCH_CTX.lock().ok().and_then(|g| g.clone())
+}
+
+fn update_auto_switch_ts(ts: u64) {
+    if let Ok(mut ctx) = AUTO_SWITCH_CTX.lock() {
+        if let Some(ref mut c) = *ctx {
+            c.last_switch_ts = ts;
+        }
+    }
+}
+
 /// 仅将已有的机器码推送给JS（更新状态供轮询拉取，不重新生成也不写磁盘）
 #[allow(dead_code)]
 pub fn push_ids_to_js(ids: &MachineIds) {
@@ -317,7 +362,7 @@ async fn run_server() {
             };
 
             let request = String::from_utf8_lossy(&buf[..n]).to_string();
-            let response = handle_request(&request);
+            let response = handle_request_async(&request).await;
 
             let http_response = format!(
                 "HTTP/1.1 200 OK\r\n\
@@ -343,7 +388,7 @@ pub fn stop_local_server() {
     SERVER_RUNNING.store(false, Ordering::SeqCst);
 }
 
-fn handle_request(request: &str) -> String {
+async fn handle_request_async(request: &str) -> String {
     let first_line = request.lines().next().unwrap_or("");
 
     if first_line.contains("OPTIONS") {
@@ -377,7 +422,7 @@ fn handle_request(request: &str) -> String {
 
     // 自动换号请求（JS fetch拦截401/403/429时触发）
     if first_line.contains("POST /api/auto-switch") {
-        return handle_auto_switch();
+        return handle_auto_switch_async().await;
     }
 
     serde_json::json!({"error": "not found"}).to_string()
@@ -423,9 +468,166 @@ fn handle_ack_new() -> String {
 }
 
 /// 处理 /api/auto-switch — JS 检测到 401/403/429 时触发
-fn handle_auto_switch() -> String {
-    // 此处仅返回成功，实际换号逻辑由 seamless_switch 模块的轮询处理
-    serde_json::json!({"success": false, "message": "auto-switch via polling"}).to_string()
+/// 与参考实现 seamless_server._handle_auto_switch 对齐：
+/// 1. 冷却检查 + 互斥锁
+/// 2. 调后端 /hou/csk/card/renew 拿新账号
+/// 3. 生成新机器码
+/// 4. 写 SQLite（auth + telemetry）+ 写磁盘文件
+/// 5. 更新 SEAMLESS_STATE（is_new=true），让 JS 下次轮询时通过 window.store.set 内存热更新
+async fn handle_auto_switch_async() -> String {
+    // 1. 互斥：同一时刻只允许一个换号在跑
+    if AUTO_SWITCH_RUNNING.swap(true, Ordering::SeqCst) {
+        return serde_json::json!({"success": false, "message": "换号进行中，请稍候"}).to_string();
+    }
+
+    // 用 defer 风格保证 RUNNING 标志在退出时被复位
+    struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            AUTO_SWITCH_RUNNING.store(false, Ordering::SeqCst);
+        }
+    }
+    let _guard = Guard;
+
+    // 2. 上下文检查
+    let ctx = match get_auto_switch_context() {
+        Some(c) => c,
+        None => {
+            return serde_json::json!({
+                "success": false,
+                "message": "自动换号未激活：缺少激活码/数据库路径"
+            }).to_string();
+        }
+    };
+
+    // 3. 冷却检查（30 秒）
+    let now = now_ts();
+    if ctx.last_switch_ts > 0 && now - ctx.last_switch_ts < AUTO_SWITCH_COOLDOWN_SECS {
+        let remaining = AUTO_SWITCH_COOLDOWN_SECS - (now - ctx.last_switch_ts);
+        return serde_json::json!({
+            "success": false,
+            "message": format!("冷却中，{}秒后可再次切换", remaining)
+        }).to_string();
+    }
+
+    // 4. 调后端 API 获取新账号
+    let device_id = utils::get_cached_device_id();
+    let body = serde_json::json!({
+        "cardCode": ctx.card_code,
+        "deviceId": device_id,
+    });
+    let api_url_owned = utils::api_url(obfstr::obfstr!("/hou/csk/card/renew"));
+    let resp = match utils::http_post_json(api_url_owned.as_str(), &body).await {
+        Ok(r) => r,
+        Err(e) => {
+            return serde_json::json!({
+                "success": false,
+                "message": format!("后端请求失败: {}", e)
+            }).to_string();
+        }
+    };
+
+    let success = resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !success {
+        let msg = resp.get("message").and_then(|v| v.as_str()).unwrap_or("获取账号失败");
+        return serde_json::json!({
+            "success": false,
+            "expired": msg.contains("到期") || msg.contains("封禁"),
+            "message": msg
+        }).to_string();
+    }
+
+    let email = resp.get("email").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let token = resp.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    if email.is_empty() || token.is_empty() {
+        return serde_json::json!({
+            "success": false,
+            "message": "后端返回的账号信息不完整"
+        }).to_string();
+    }
+
+    // 5. 生成新机器码（一份 ID 同时用于 SQLite / 磁盘 / 内存推送）
+    let ids = generate_machine_ids();
+
+    // 6. 写 SQLite —— cursorAuth/* + telemetry.*
+    let db_ok = write_auth_and_telemetry_to_sqlite(&ctx.db_path, &email, &token, &ids);
+    if !db_ok {
+        eprintln!("[auto-switch] SQLite 写入失败（继续执行，依赖内存注入）");
+    }
+
+    // 7. 写磁盘文件（machineId 文件 + storage.json + state.vscdb 全部 telemetry 字段）
+    if let Err(e) = update_disk_files(&ids) {
+        eprintln!("[auto-switch] 磁盘文件更新失败: {}", e);
+    }
+
+    // 8. 更新 SEAMLESS_STATE（is_new=true），JS 下次轮询拾取后用 window.store.set 内存热更新
+    update_seamless_state(&email, &token, &token, &ids);
+
+    // 9. 记录本次换号时间，进入冷却
+    update_auto_switch_ts(now_ts());
+
+    println!("[auto-switch] ✅ 自动换号成功: {}", email);
+
+    serde_json::json!({
+        "success": true,
+        "email": email,
+        "message": "自动换号成功"
+    }).to_string()
+}
+
+/// 将认证信息 + telemetry ID 写入 state.vscdb
+/// 与参考实现的 CursorAuthManager.update_auth + MachineIDResetter._update_sqlite_db 合并
+fn write_auth_and_telemetry_to_sqlite(
+    db_path: &str,
+    email: &str,
+    token: &str,
+    ids: &MachineIds,
+) -> bool {
+    if !Path::new(db_path).exists() {
+        return false;
+    }
+    utils::clear_macos_immutable_flag(Path::new(db_path));
+
+    let conn = match rusqlite::Connection::open(db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[auto-switch] 打开 SQLite 失败: {}", e);
+            return false;
+        }
+    };
+    let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=8000;");
+
+    let auth0_value = utils::keys::auth0_value();
+    let svc_key = obfstr::obfstr!("storage.serviceMachineId").to_string();
+
+    let updates: [(String, &str); 10] = [
+        (utils::keys::auth_access(), token),
+        (utils::keys::auth_refresh(), token),
+        (utils::keys::auth_email(), email),
+        (utils::keys::auth_signup(), auth0_value.as_str()),
+        (utils::keys::telem_dev(), &ids.dev_device_id),
+        (utils::keys::telem_mac(), &ids.mac_machine_id),
+        (utils::keys::telem_machine(), &ids.machine_id),
+        (utils::keys::telem_sqm(), &ids.sqm_id),
+        (svc_key, &ids.service_machine_id),
+        (
+            obfstr::obfstr!("cursorAuth/stripeMembershipType").to_string(),
+            "pro",
+        ),
+    ];
+
+    let mut ok = true;
+    for (key, value) in &updates {
+        if let Err(e) = conn.execute(
+            "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, value],
+        ) {
+            eprintln!("[auto-switch] 写入 SQLite key={} 失败: {}", key, e);
+            ok = false;
+        }
+    }
+    ok
 }
 
 fn handle_heartbeat(request: &str) -> String {

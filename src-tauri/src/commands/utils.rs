@@ -111,7 +111,6 @@ pub fn get_cursor_data_dir() -> Option<PathBuf> {
 }
 
 /// Get the Cursor state.vscdb path
-#[allow(dead_code)]
 pub fn get_cursor_db_path() -> Option<PathBuf> {
     get_cursor_data_dir().map(|d| d.join("User").join("globalStorage").join("state.vscdb"))
 }

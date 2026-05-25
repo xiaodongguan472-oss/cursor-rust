@@ -36,7 +36,7 @@ fn main() {
             ipc::xa1,
             ipc::xb1, ipc::xb2,
             ipc::xc1, ipc::xc2, ipc::xc3, ipc::xc4, ipc::xc5, ipc::xc6,
-            ipc::xc7, ipc::xc8, ipc::xc9, ipc::xca, ipc::xcb, ipc::xcc, ipc::xcd,
+            ipc::xc7, ipc::xc8, ipc::xc9, ipc::xca, ipc::xcb, ipc::xcc, ipc::xcd, ipc::xce,
             ipc::xd1, ipc::xd2,
             ipc::xe1,
             ipc::xf1, ipc::xf2, ipc::xf3,

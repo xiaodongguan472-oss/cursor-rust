@@ -10475,7 +10475,7 @@
 
                 ElMessage.info('正在开启激活无感换号...');
 
-                const result = await ipcRenderer.invoke('xc1');
+                const result = await ipcRenderer.invoke('xc1', { cardCode: this.cardCode });
 
                 if (result.success) {
 
@@ -10863,7 +10863,7 @@
 
                 ElMessage.info('正在开启激活无感换号...');
 
-                const patchResult = await ipcRenderer.invoke('xc1');
+                const patchResult = await ipcRenderer.invoke('xc1', { cardCode: this.cardCode });
 
                 if (patchResult.success) {
 
