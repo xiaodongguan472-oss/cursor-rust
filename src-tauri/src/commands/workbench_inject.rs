@@ -18,7 +18,8 @@ const LOCAL_SERVER_PORT: u16 = 14521; // 本地HTTP服务端口
 // ========== 全局状态 ==========
 
 static SERVER_RUNNING: AtomicBool = AtomicBool::new(false);
-static MACHINE_STATE: Mutex<Option<MachineResetState>> = Mutex::new(None);
+/// 与参考实现的 seamless_state.json 对齐的统一状态
+static SEAMLESS_STATE: Mutex<Option<SeamlessState>> = Mutex::new(None);
 static INJECT_STATUS: Mutex<InjectStatus> = Mutex::new(InjectStatus {
     js_connected: false,
     store_captured: false,
@@ -52,10 +53,20 @@ pub struct MachineIds {
     pub service_machine_id: String,
 }
 
+/// 统一状态结构（对应参考实现的 seamless_state.json）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct MachineResetState {
-    is_new: bool,
-    machine_ids: MachineIds,
+pub struct SeamlessState {
+    pub config: SeamlessConfig,
+    pub access_token: String,
+    pub refresh_token: String,
+    pub email: String,
+    pub is_new: bool,
+    pub machine_ids: MachineIds,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SeamlessConfig {
+    pub enabled: bool,
 }
 
 // ========== 机器码生成（与AI助手文档一致的算法） ==========
@@ -152,23 +163,62 @@ pub fn perform_machine_reset() -> Result<MachineIds, String> {
     update_disk_files(&ids)?;
 
     // 更新状态（供注入的JS轮询拉取）
-    if let Ok(mut state) = MACHINE_STATE.lock() {
-        *state = Some(MachineResetState {
-            is_new: true,
-            machine_ids: ids.clone(),
-        });
+    if let Ok(mut state) = SEAMLESS_STATE.lock() {
+        if let Some(ref mut s) = *state {
+            s.is_new = true;
+            s.machine_ids = ids.clone();
+        } else {
+            *state = Some(SeamlessState {
+                config: SeamlessConfig { enabled: true },
+                access_token: String::new(),
+                refresh_token: String::new(),
+                email: String::new(),
+                is_new: true,
+                machine_ids: ids.clone(),
+            });
+        }
     }
 
     Ok(ids)
 }
 
-/// 仅将已有的机器码推送给JS（更新状态供轮询拉取，不重新生成也不写磁盘）
-pub fn push_ids_to_js(ids: &MachineIds) {
-    if let Ok(mut state) = MACHINE_STATE.lock() {
-        *state = Some(MachineResetState {
+/// 更新无感换号状态（token + machineIds 一起推送给JS轮询拾取）
+/// 与参考实现的 write_state(seamless_state.json) 对应
+pub fn update_seamless_state(
+    email: &str,
+    access_token: &str,
+    refresh_token: &str,
+    ids: &MachineIds,
+) {
+    if let Ok(mut state) = SEAMLESS_STATE.lock() {
+        *state = Some(SeamlessState {
+            config: SeamlessConfig { enabled: true },
+            access_token: access_token.to_string(),
+            refresh_token: refresh_token.to_string(),
+            email: email.to_string(),
             is_new: true,
             machine_ids: ids.clone(),
         });
+    }
+}
+
+/// 仅将已有的机器码推送给JS（更新状态供轮询拉取，不重新生成也不写磁盘）
+#[allow(dead_code)]
+pub fn push_ids_to_js(ids: &MachineIds) {
+    if let Ok(mut state) = SEAMLESS_STATE.lock() {
+        if let Some(ref mut s) = *state {
+            s.is_new = true;
+            s.machine_ids = ids.clone();
+        } else {
+            *state = Some(SeamlessState {
+                config: SeamlessConfig { enabled: true },
+                access_token: String::new(),
+                refresh_token: String::new(),
+                email: String::new(),
+                is_new: true,
+                machine_ids: ids.clone(),
+            });
+        }
     }
 }
 
@@ -267,12 +317,24 @@ fn handle_request(request: &str) -> String {
         return "{}".to_string();
     }
 
-    if first_line.contains("GET /api/machine-state") {
-        return handle_get_machine_state();
+    // 与参考实现一致的 /api/get-token（JS 每秒轮询）
+    if first_line.contains("GET /api/get-token") {
+        return handle_get_token();
     }
 
+    // 兼容旧版 /api/machine-state
+    if first_line.contains("GET /api/machine-state") {
+        return handle_get_token();
+    }
+
+    // JS 确认已消费新机器码
+    if first_line.contains("POST /api/ack-new") {
+        return handle_ack_new();
+    }
+
+    // 兼容旧版 /api/ack-reset
     if first_line.contains("POST /api/ack-reset") {
-        return handle_ack_reset();
+        return handle_ack_new();
     }
 
     // JS心跳 + 状态上报
@@ -280,29 +342,42 @@ fn handle_request(request: &str) -> String {
         return handle_heartbeat(request);
     }
 
+    // 自动换号请求（JS fetch拦截401/403/429时触发）
+    if first_line.contains("POST /api/auto-switch") {
+        return handle_auto_switch();
+    }
+
     serde_json::json!({"error": "not found"}).to_string()
 }
 
-fn handle_get_machine_state() -> String {
-    let state = MACHINE_STATE.lock().ok().and_then(|g| g.clone());
+/// 处理 /api/get-token — 与参考实现的 seamless_state.json 格式一致
+fn handle_get_token() -> String {
+    let state = SEAMLESS_STATE.lock().ok().and_then(|g| g.clone());
 
     match state {
         Some(s) => serde_json::json!({
+            "config": {"enabled": s.config.enabled},
+            "accessToken": s.access_token,
+            "refreshToken": s.refresh_token,
+            "email": s.email,
             "is_new": s.is_new,
-            "devDeviceId": s.machine_ids.dev_device_id,
-            "macMachineId": s.machine_ids.mac_machine_id,
-            "machineId": s.machine_ids.machine_id,
-            "sqmId": s.machine_ids.sqm_id,
-            "serviceMachineId": s.machine_ids.service_machine_id,
+            "machineIds": {
+                "devDeviceId": s.machine_ids.dev_device_id,
+                "macMachineId": s.machine_ids.mac_machine_id,
+                "machineId": s.machine_ids.machine_id,
+                "sqmId": s.machine_ids.sqm_id,
+            },
         }).to_string(),
         None => serde_json::json!({
+            "config": {"enabled": false},
             "is_new": false,
         }).to_string(),
     }
 }
 
-fn handle_ack_reset() -> String {
-    if let Ok(mut state) = MACHINE_STATE.lock() {
+/// 处理 /api/ack-new — JS 确认已消费新机器码/token
+fn handle_ack_new() -> String {
+    if let Ok(mut state) = SEAMLESS_STATE.lock() {
         if let Some(ref mut s) = *state {
             s.is_new = false;
         }
@@ -311,7 +386,13 @@ fn handle_ack_reset() -> String {
         status.last_reset_ack = now_ts();
         status.reset_count += 1;
     }
-    serde_json::json!({"success": true}).to_string()
+    serde_json::json!({"ok": true}).to_string()
+}
+
+/// 处理 /api/auto-switch — JS 检测到 401/403/429 时触发
+fn handle_auto_switch() -> String {
+    // 此处仅返回成功，实际换号逻辑由 seamless_switch 模块的轮询处理
+    serde_json::json!({"success": false, "message": "auto-switch via polling"}).to_string()
 }
 
 fn handle_heartbeat(request: &str) -> String {
@@ -359,10 +440,9 @@ fn get_workbench_js_path(base_path: &str) -> PathBuf {
 }
 
 /// 构建注入到 workbench.desktop.main.js 的 JS 代码
-/// 包含3个注入点：
-/// 0 - 禁用完整性检查通知
-/// 1 - 暴露 window.store（StorageService）
-/// 2 - 轮询本地服务拉取新机器码并通过 window.store.set() 写入内存
+/// 与参考实现完全对齐：
+/// - 注入点1（i1）：在 getItems() 处捕获 StorageService → window.store
+/// - 注入点2（i2）：轮询 /api/get-token 拉取 token + machineIds，用 .set() 写入内存
 fn build_workbench_inject_code() -> String {
     let port = LOCAL_SERVER_PORT;
 
@@ -370,46 +450,73 @@ fn build_workbench_inject_code() -> String {
         r#"{start}
 ;(function(){{
 var _mcBase='http://127.0.0.1:{port}';
-/* === 注入点1: 暴露 window.store === */
-try{{
-var _mcStoreCaptured=false;
-const _origDefProp=Object.defineProperty;
-Object.defineProperty=function(t,p,d){{
-if(!_mcStoreCaptured){{
-if((p==='storageService'||p==='_storageService')&&d&&d.value&&typeof d.value.store==='function'){{
-try{{window.store=d.value;_mcStoreCaptured=true;}}catch(e){{}}
-}}
-}}
-return _origDefProp.call(this,t,p,d);
-}};
-}}catch(e){{}}
+var _origFetch=window.fetch;
 
-/* === 注入点2: 心跳 + 轮询机器码 === */
+/* === 注入点2: Token 轮询 + 机器码重置 + fetch 拦截 === */
 try{{
-var _mcLastIds='';
-function _mcHB(){{try{{fetch(_mcBase+'/api/heartbeat',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{store_captured:!!window.store}})}}).catch(function(){{}});}}catch(e){{}}}}
-async function _mcPoll(){{
+var _lastAppliedToken='';
+var _lastNotifiedEmail='';
+var _gSwitching=false,_gLastSuccess=0;
+
+function _doSwitch(reason){{
+if(_gSwitching)return;
+var now=Date.now();
+if(now-_gLastSuccess<30000)return;
+_gSwitching=true;
+_origFetch(_mcBase+'/api/auto-switch',{{method:'POST',headers:{{'Content-Type':'application/json'}},signal:AbortSignal.timeout(15000)}}).then(function(r){{return r.json()}}).then(function(d){{
+if(d.success){{_gLastSuccess=Date.now();}}else{{_gLastSuccess=Date.now();}}
+_gSwitching=false;
+}}).catch(function(e){{_gLastSuccess=Date.now();_gSwitching=false;}});
+}}
+
+setInterval(async()=>{{
 try{{
-var r=await fetch(_mcBase+'/api/machine-state');
-var d=await r.json();
-if(!d.is_new)return;
-var idKey=d.machineId||'';
-if(idKey===_mcLastIds)return;
-if(window.store&&typeof window.store.store==='function'){{
-window.store.store('telemetry.devDeviceId',-1,d.devDeviceId);
-window.store.store('telemetry.macMachineId',-1,d.macMachineId);
-window.store.store('telemetry.machineId',-1,d.machineId);
-window.store.store('telemetry.sqmId',-1,d.sqmId);
-window.store.store('storage.serviceMachineId',-1,d.serviceMachineId);
-_mcLastIds=idKey;
-fetch(_mcBase+'/api/ack-reset',{{method:'POST'}}).catch(function(){{}});
+if(!window.store)return;
+var resp=await _origFetch(_mcBase+'/api/get-token',{{signal:AbortSignal.timeout(3000)}});
+if(resp.ok){{
+var data=await resp.json();
+if(!data.config||!data.config.enabled)return;
+if(data.accessToken&&data.accessToken!==_lastAppliedToken){{
+_lastAppliedToken=data.accessToken;
+window.store.set('cursorAuth/accessToken',data.accessToken,-1);
+if(data.refreshToken)window.store.set('cursorAuth/refreshToken',data.refreshToken,-1);
+if(data.email)window.store.set('cursorAuth/cachedEmail',data.email,-1);
+window.store.set('cursorAuth/stripeMembershipType','pro',-1);
+window.store.set('cursorAuth/stripeSubscriptionStatus','active',-1);
+}}
+if(data.is_new&&data.machineIds){{
+window.store.set('telemetry.devDeviceId',data.machineIds.devDeviceId,-1);
+window.store.set('telemetry.machineId',data.machineIds.machineId,-1);
+window.store.set('telemetry.macMachineId',data.machineIds.macMachineId,-1);
+window.store.set('telemetry.sqmId',data.machineIds.sqmId,-1);
+_origFetch(_mcBase+'/api/ack-new',{{method:'POST'}}).catch(function(){{}});
+}}
+if(data.email&&data.email!==_lastNotifiedEmail){{
+_lastNotifiedEmail=data.email;
+}}
 }}
 }}catch(e){{}}
+}},1000);
+
+/* fetch 拦截: HTTP 401/403/429 自动换号 */
+window.fetch=async function(){{
+var resp=await _origFetch.apply(this,arguments);
+try{{
+var a0=arguments[0];
+var url=typeof a0==='string'?a0:(a0&&typeof a0.url==='string'?a0.url:'');
+if(url.includes('cursor.sh')||url.includes('cursor.com')){{
+if(resp.status===401||resp.status===403||resp.status===429){{
+_doSwitch('HTTP '+resp.status);
 }}
-setInterval(_mcPoll,2000);
-setInterval(_mcHB,5000);
-setTimeout(_mcHB,2000);
-setTimeout(_mcPoll,3000);
+}}
+}}catch(e){{}}
+return resp;
+}};
+
+/* 心跳 */
+setInterval(function(){{try{{_origFetch(_mcBase+'/api/heartbeat',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{store_captured:!!window.store}})}}).catch(function(){{}});}}catch(e){{}}}},5000);
+setTimeout(function(){{try{{_origFetch(_mcBase+'/api/heartbeat',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{store_captured:!!window.store}})}}).catch(function(){{}});}}catch(e){{}}}},2000);
+
 }}catch(e){{}}
 }})();
 {end}
@@ -417,6 +524,16 @@ setTimeout(_mcPoll,3000);
         start = WB_PATCH_START,
         end = WB_PATCH_END,
         port = port,
+    )
+}
+
+/// 注入点1的搜索字符串（与参考实现一致，在 StorageService 初始化处插入）
+const INJECT1_SEARCH: &str = "this.database.getItems()))";
+
+/// 构建注入点1的代码：捕获 StorageService → window.store
+fn build_inject1_code() -> String {
+    format!(
+        r#"/*i1s*/;(function(e){{try{{if(!window.store&&e&&typeof e.get==='function'&&typeof e.set==='function'){{window.store=e;console.log('[MC] store bound');}}}}catch(_e){{}}}})(this);/*i1e*/"#
     )
 }
 
@@ -441,12 +558,14 @@ pub fn patch_workbench(base_path: &str) -> serde_json::Value {
         }
     };
 
-    // 已注入过？先移除旧的
-    let content = if content.contains(WB_PATCH_START) {
+    // 已注入过？先移除旧的（末尾注入块 + 内联注入点1）
+    let mut content = if content.contains(WB_PATCH_START) {
         remove_patch_from_content(&content)
     } else {
         content
     };
+    // 移除旧版注入点1标记
+    content = remove_between(&content, "/*i1s*/", "/*i1e*/");
 
     // 创建备份
     let backup = format!("{}.mc_bak", wb_path.to_string_lossy());
@@ -454,8 +573,23 @@ pub fn patch_workbench(base_path: &str) -> serde_json::Value {
         let _ = fs::copy(&wb_path, &backup);
     }
 
+    // 注入点1（关键）：在 getItems() 处插入代码捕获 StorageService → window.store
+    // 与参考实现完全一致的注入位置
+    if !content.contains(INJECT1_SEARCH) {
+        return serde_json::json!({
+            "success": false,
+            "error": format!("未找到注入点1的匹配代码 ({}), Cursor 版本可能不兼容", INJECT1_SEARCH)
+        });
+    }
+    let inject1 = build_inject1_code();
+    content = content.replacen(
+        INJECT1_SEARCH,
+        &format!("{}{}", INJECT1_SEARCH, inject1),
+        1,
+    );
+
+    // 注入点2：轮询 + fetch 拦截（追加到文件末尾）
     let inject_code = build_workbench_inject_code();
-    // 注入到文件末尾（不影响原始代码解析）
     let new_content = format!("{}\n{}", content, inject_code);
 
     let write_result = utils::safe_modify_file(&wb_path, || {
@@ -539,6 +673,20 @@ pub fn check_workbench_patched(base_path: &str) -> bool {
     } else {
         false
     }
+}
+
+/// 移除两个标记之间的内容（含标记本身）
+fn remove_between(content: &str, start_marker: &str, end_marker: &str) -> String {
+    if let Some(s) = content.find(start_marker) {
+        if let Some(e) = content.find(end_marker) {
+            let end_pos = e + end_marker.len();
+            let mut result = String::new();
+            result.push_str(&content[..s]);
+            result.push_str(&content[end_pos..]);
+            return result;
+        }
+    }
+    content.to_string()
 }
 
 fn remove_patch_from_content(content: &str) -> String {

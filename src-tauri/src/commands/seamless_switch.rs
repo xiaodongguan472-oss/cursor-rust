@@ -597,10 +597,10 @@ pub async fn seamless_switch_cmd(
         Some(&ids.machine_id),
     ).await;
 
-    // 写磁盘 + 推送内存
+    // 写磁盘 + 推送token+机器码给JS轮询
     if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
         let _ = workbench_inject::update_disk_files(&ids);
-        workbench_inject::push_ids_to_js(&ids);
+        workbench_inject::update_seamless_state(&email, &access_token, &refresh_token, &ids);
     }
 
     result
@@ -653,10 +653,10 @@ pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json:
         Some(&ids.machine_id),
     ).await;
 
-    // 4. 写磁盘 + 推送内存
+    // 4. 写磁盘 + 推送token+机器码给JS轮询
     if switch_result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
         let _ = workbench_inject::update_disk_files(&ids);
-        workbench_inject::push_ids_to_js(&ids);
+        workbench_inject::update_seamless_state(email, token, token, &ids);
     }
 
     let mut result = switch_result;
@@ -809,10 +809,10 @@ async fn usage_monitor_poll(app: &AppHandle) {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // 3. 写磁盘 + 推送内存
+    // 3. 写磁盘 + 推送token+机器码给JS轮询
     if switch_ok {
         let _ = workbench_inject::update_disk_files(&ids);
-        workbench_inject::push_ids_to_js(&ids);
+        workbench_inject::update_seamless_state(&email, &new_token, &new_token, &ids);
     }
 
     let _ = app.emit_all(
