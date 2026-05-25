@@ -578,8 +578,8 @@ pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json:
         });
     }
 
-    // 2. Fetch new account
-    let device_id = utils::generate_stable_machine_id();
+    // 2. Fetch new account (使用缓存的设备码，确保稳定性)
+    let device_id = utils::get_cached_device_id();
     let body = serde_json::json!({
         "cardCode": card_code,
         "deviceId": device_id
@@ -631,7 +631,8 @@ async fn fetch_new_account_with_retry(
     app: &AppHandle,
     card_code: &str,
 ) -> Result<(String, String), String> {
-    let device_id = utils::generate_stable_machine_id();
+    // 使用缓存的设备码，确保稳定性
+    let device_id = utils::get_cached_device_id();
     let api_url_owned = utils::api_url(obfstr::obfstr!("/hou/csk/card/renew"));
     let api_url = api_url_owned.as_str();
     let max_retries = 3;

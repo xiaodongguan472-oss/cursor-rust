@@ -14,6 +14,9 @@ fn main() {
     // 反逆向：拒绝调试器附加 + 后台监控（必须在 tauri 启动前）
     commands::anti_debug::init();
 
+    // 数据迁移：从旧版 Electron 目录 (cursor-renewal-client) 迁移到新版 (cursor-renewal)
+    commands::utils::migrate_legacy_data();
+
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             ipc::x0a, ipc::x0b, ipc::x0c,

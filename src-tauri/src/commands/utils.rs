@@ -143,6 +143,99 @@ pub fn get_app_data_dir() -> PathBuf {
     }
 }
 
+/// Get the legacy (Electron) app data directory
+pub fn get_legacy_app_data_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = env::var("APPDATA").unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join("AppData")
+                .join("Roaming")
+                .to_string_lossy()
+                .to_string()
+        });
+        PathBuf::from(appdata).join("cursor-renewal-client")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        dirs::home_dir()
+            .unwrap_or_default()
+            .join(".cursor-renewal-client")
+    }
+}
+
+/// Migrate data from legacy Electron app directory to new Tauri app directory
+/// Files to migrate: device_id.txt, card_info.json, settings.json
+pub fn migrate_legacy_data() {
+    let new_dir = get_app_data_dir();
+    let legacy_dir = get_legacy_app_data_dir();
+    let migrated_marker = new_dir.join("migrated.txt");
+    
+    // Skip if already migrated
+    if migrated_marker.exists() {
+        return;
+    }
+    
+    // Skip if legacy directory doesn't exist
+    if !legacy_dir.exists() {
+        // Create marker anyway to skip future checks
+        let _ = std::fs::create_dir_all(&new_dir);
+        let _ = std::fs::write(&migrated_marker, "migrated");
+        return;
+    }
+    
+    // Ensure new directory exists
+    let _ = std::fs::create_dir_all(&new_dir);
+    
+    // Files to migrate
+    let files_to_migrate = ["device_id.txt", "card_info.json", "settings.json"];
+    
+    for file_name in &files_to_migrate {
+        let legacy_file = legacy_dir.join(file_name);
+        let new_file = new_dir.join(file_name);
+        
+        // Only copy if legacy file exists and new file doesn't
+        if legacy_file.exists() && !new_file.exists() {
+            if let Ok(content) = std::fs::read(&legacy_file) {
+                let _ = std::fs::write(&new_file, content);
+                dlog!("[Migration] Copied {} from legacy directory", file_name);
+            }
+        }
+    }
+    
+    // Create migration marker
+    let _ = std::fs::write(&migrated_marker, format!("migrated at {}", chrono::Local::now()));
+    dlog!("[Migration] Legacy data migration completed");
+}
+
+/// Get cached device ID, or generate and cache if not exists
+/// This is the stable device ID sent to backend API
+pub fn get_cached_device_id() -> String {
+    let app_dir = get_app_data_dir();
+    let device_id_file = app_dir.join("device_id.txt");
+    
+    // Try to read cached device ID
+    if device_id_file.exists() {
+        if let Ok(cached) = std::fs::read_to_string(&device_id_file) {
+            let cached = cached.trim().to_string();
+            if cached.len() > 10 {
+                return cached;
+            }
+        }
+    }
+    
+    // Generate new device ID
+    let device_id = generate_stable_machine_id();
+    
+    // Cache it
+    let _ = std::fs::create_dir_all(&app_dir);
+    let _ = std::fs::write(&device_id_file, &device_id);
+    dlog!("[DeviceID] Generated and cached new device ID");
+    
+    device_id
+}
+
 /// Make an HTTP GET request and return JSON
 pub async fn http_get_json(url: &str) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::builder()
