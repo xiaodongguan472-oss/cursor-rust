@@ -420,9 +420,9 @@ pub fn perform_full_machine_id_reset() -> ResetResult {
     ResetResult {
         success: warnings.is_empty(),
         message: Some(if warning_msg.is_some() {
-            "机器码已重置（部分步骤有警告），重启Cursor后生效".to_string()
+            "机器码已重置（部分步骤有警告），请点击无感换号".to_string()
         } else {
-            "机器码完全重置成功，重启Cursor后生效".to_string()
+            "机器码完全重置成功，请点击无感换号".to_string()
         }),
         error: warning_msg,
         new_ids: Some(ids.to_json_value()),

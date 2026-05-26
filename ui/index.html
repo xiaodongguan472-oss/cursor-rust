@@ -10759,7 +10759,7 @@
 
               if (result && result.success) {
 
-                ElMessage.success(result.message || '机器码重置成功，重启 Cursor 后生效');
+                ElMessage.success(result.message || '机器码重置成功，请点击无感换号');
 
               } else {
 
@@ -11171,14 +11171,21 @@
           },
 
           // 打开教程（根据当前系统自动选择 Windows/Mac）
-          openTutorial(type) {
+          async openTutorial(type) {
             // 检测当前系统
             const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
             const system = isMac ? 'mac' : 'windows';
             const url = this.tutorialLinks[system][type];
             
             if (url) {
-              window.open(url, '_blank');
+              try {
+                // 使用 Tauri shell.open 打开外部链接（macOS 上 window.open 不工作）
+                await ipcRenderer.invoke('x4e', url);
+              } catch (e) {
+                console.error('打开教程链接失败:', e);
+                // 兜底：尝试 window.open
+                window.open(url, '_blank');
+              }
             } else {
               ElMessage.warning('教程链接正在加载中，请稍后再试');
             }

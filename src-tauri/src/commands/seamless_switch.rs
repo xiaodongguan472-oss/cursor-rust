@@ -557,9 +557,13 @@ pub async fn seamless_switch_cmd(
     access_token: String,
     refresh_token: String,
 ) -> serde_json::Value {
+    // 1. 先重置机器码（换号前）
+    let _ = machine_id::perform_full_machine_id_reset();
+
+    // 2. 执行换号
     let result = do_seamless_switch(&db_path, &email, &access_token, &refresh_token).await;
 
-    // Reset machine IDs after successful switch
+    // 3. 换号成功后再次重置机器码（确保新账号使用新机器码）
     if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
         let _ = machine_id::perform_full_machine_id_reset();
     }
@@ -607,10 +611,13 @@ pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json:
         return serde_json::json!({"success": false, "error": "后端返回的账号信息不完整"});
     }
 
-    // 3. Execute seamless switch
+    // 3. 先重置机器码（换号前）
+    let _ = machine_id::perform_full_machine_id_reset();
+
+    // 4. Execute seamless switch
     let switch_result = do_seamless_switch(&db_path, email, token, token).await;
 
-    // 4. Reset machine IDs
+    // 5. 换号成功后再次重置机器码（确保新账号使用新机器码）
     if switch_result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
         let _ = machine_id::perform_full_machine_id_reset();
     }
@@ -751,7 +758,10 @@ async fn usage_monitor_poll(app: &AppHandle) {
         }
     };
 
-    // 2. 执行无感换号
+    // 2. 先重置机器码（换号前）
+    let _ = machine_id::perform_full_machine_id_reset();
+
+    // 3. 执行无感换号
     let db_path = utils::get_cursor_db_path()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
@@ -761,7 +771,7 @@ async fn usage_monitor_poll(app: &AppHandle) {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // 3. 重置机器码
+    // 4. 换号成功后再次重置机器码（确保新账号使用新机器码）
     if switch_ok {
         let _ = machine_id::perform_full_machine_id_reset();
     }
