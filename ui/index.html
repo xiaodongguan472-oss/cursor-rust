@@ -4310,6 +4310,200 @@
 
   </style>
 
+  <!-- 温馨提示弹窗 - 精致通知公告主题 -->
+  <style>
+    @keyframes tech-popup-fadein {
+      from { opacity: 0; transform: translateY(16px) scale(0.97); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes tech-card-fadein {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    /* 主题色 CSS 变量：根据 step 切换 */
+    .tech-popup {
+      --accent: #f59e0b;
+      --accent-strong: #d97706;
+      --accent-soft: #fef3c7;
+      --accent-tint: #fffbeb;
+      --accent-border: #fde68a;
+      --accent-text: #92400e;
+
+      width: 580px; max-width: 92%;
+      background: #ffffff;
+      border-radius: 16px;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 24px 48px -12px rgba(15, 23, 42, 0.25), 0 0 0 1px rgba(15, 23, 42, 0.03);
+      overflow: hidden;
+      animation: tech-popup-fadein 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+      transition: --accent 0.3s ease;
+    }
+    /* 步骤2：切换为蓝色主题 */
+    .tech-popup.step-2 {
+      --accent: #3b82f6;
+      --accent-strong: #2563eb;
+      --accent-soft: #dbeafe;
+      --accent-tint: #eff6ff;
+      --accent-border: #bfdbfe;
+      --accent-text: #1e40af;
+    }
+
+    /* 头部 */
+    .tech-popup-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 22px 24px 18px;
+    }
+    .tech-popup-title {
+      display: flex; align-items: center; gap: 12px;
+      font-size: 17px; font-weight: 600; letter-spacing: 0;
+      color: #0f172a;
+    }
+    .tech-popup-title-dot {
+      width: 36px; height: 36px; border-radius: 10px;
+      background: var(--accent-tint);
+      border: 1px solid var(--accent-border);
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 17px;
+      transition: all 0.3s ease;
+    }
+    .tech-popup-title-dot::before {
+      content: '📣';
+    }
+    .tech-popup-title-text {
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .tech-popup-title-sub {
+      font-size: 12px; font-weight: 400; color: #64748b; letter-spacing: 0.2px;
+    }
+    .tech-popup-close {
+      background: transparent; border: none;
+      color: #94a3b8; font-size: 20px; cursor: pointer;
+      width: 32px; height: 32px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s ease; line-height: 1;
+    }
+    .tech-popup-close:hover {
+      background: #f1f5f9; color: #0f172a;
+    }
+
+    /* 步骤进度条 */
+    .tech-popup-steps {
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 24px 16px;
+    }
+    .tech-popup-step-track {
+      flex: 1; height: 3px; border-radius: 2px;
+      background: #f1f5f9;
+      overflow: hidden;
+      position: relative;
+    }
+    .tech-popup-step-fill {
+      position: absolute; left: 0; top: 0; bottom: 0;
+      background: var(--accent);
+      border-radius: 2px;
+      transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s ease;
+    }
+    .tech-popup-step-label {
+      font-size: 11px; color: #94a3b8; font-weight: 500; letter-spacing: 0.5px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* 内容区 */
+    .tech-popup-body {
+      padding: 4px 24px 24px;
+      max-height: 380px; overflow-y: auto;
+    }
+    .tech-popup-body::-webkit-scrollbar { width: 6px; }
+    .tech-popup-body::-webkit-scrollbar-track { background: transparent; }
+    .tech-popup-body::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 3px; }
+    .tech-popup-body::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+
+    /* 通知卡片 - 与主题色协调 */
+    .tech-popup-card {
+      position: relative;
+      background: var(--accent-tint);
+      border: 1px solid var(--accent-border);
+      border-radius: 12px;
+      padding: 18px 20px;
+      animation: tech-card-fadein 0.3s ease-out;
+    }
+    .tech-popup-card-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px dashed var(--accent-border);
+    }
+    .tech-popup-card-tag {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 20px;
+      background: #ffffff;
+      border: 1px solid var(--accent-border);
+      font-size: 12px; font-weight: 600;
+      color: var(--accent-text);
+    }
+    .tech-popup-card-tag-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--accent);
+    }
+    .tech-popup-card-title {
+      font-weight: 600; font-size: 14px;
+      color: #0f172a;
+    }
+    .tech-popup-card-meta {
+      margin-left: auto;
+      font-size: 11px; color: #94a3b8;
+      font-variant-numeric: tabular-nums;
+    }
+    .tech-popup-card-content {
+      white-space: pre-wrap; line-height: 1.75; font-size: 14px;
+      color: #334155;
+    }
+
+    /* 底部按钮区 */
+    .tech-popup-footer {
+      display: flex; align-items: center; gap: 10px;
+      padding: 16px 24px 20px;
+      background: #ffffff;
+      border-top: 1px solid #f1f5f9;
+    }
+    .tech-popup-btn {
+      flex: 1;
+      padding: 12px 24px;
+      background: var(--accent-strong);
+      border: none;
+      color: #ffffff; font-weight: 600; font-size: 14px; letter-spacing: 0.3px;
+      border-radius: 10px; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    .tech-popup-btn:hover {
+      filter: brightness(1.05);
+      box-shadow: 0 6px 14px -3px rgba(0, 0, 0, 0.18);
+      transform: translateY(-1px);
+    }
+    .tech-popup-btn:active { transform: translateY(0); filter: brightness(0.96); }
+    .tech-popup-btn-arrow {
+      font-size: 16px; font-weight: 700;
+      transition: transform 0.2s ease;
+    }
+    .tech-popup-btn:hover .tech-popup-btn-arrow {
+      transform: translateX(3px);
+    }
+    .tech-popup-btn-secondary {
+      flex: 0 0 auto;
+      padding: 12px 18px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      color: #64748b; font-weight: 500; font-size: 14px;
+      border-radius: 10px; cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .tech-popup-btn-secondary:hover {
+      background: #f8fafc; border-color: #cbd5e1; color: #0f172a;
+    }
+  </style>
+
 </head>
 
 <body>
@@ -5426,102 +5620,87 @@
 
 
 
-    <!-- 启动弹窗对话框 -->
-
+    <!-- 启动弹窗对话框 - 精致通知公告主题 -->
     <div v-if="popup.show" class="dialog-overlay" @click.self="closePopup">
 
-      <div class="dialog-content1 popup-dialog" style="width: 600px; max-width: 90%;">
+      <div class="tech-popup" :class="{ 'step-2': popup.step === 2 }">
 
-        <div class="dialog-title" style="display: flex; align-items: center; justify-content: space-between; padding: 16px 20px;">
+        <!-- 标题栏 -->
+        <div class="tech-popup-header">
+          <div class="tech-popup-title">
+            <span class="tech-popup-title-dot"></span>
+            <span class="tech-popup-title-text">
+              <span>{{ popup.title || '温馨提示' }}</span>
+              <span class="tech-popup-title-sub" v-if="popup.updateInfo && popup.otherInfo">
+                {{ popup.step === 1 ? '查看本次更新内容' : '请留意以下重要通知' }}
+              </span>
+            </span>
+          </div>
+          <button class="tech-popup-close" @click="closePopup" title="关闭">×</button>
+        </div>
 
-          <span>{{ popup.title }}</span>
+        <!-- 步骤进度条 -->
+        <div v-if="popup.updateInfo && popup.otherInfo" class="tech-popup-steps">
+          <div class="tech-popup-step-track">
+            <div class="tech-popup-step-fill" :style="{ width: (popup.step === 1 ? 50 : 100) + '%' }"></div>
+          </div>
+          <span class="tech-popup-step-label">{{ popup.step }} / 2</span>
+        </div>
 
-          <button @click="closePopup" style="background: none; border: none; font-size: 20px; cursor: pointer; color: #999; padding: 0; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; transition: color 0.3s;" title="关闭">
+        <!-- 内容区 -->
+        <div class="tech-popup-body">
 
-            ×
+          <!-- 步骤1：更新信息 -->
+          <div v-if="popup.step === 1 && popup.updateInfo" class="tech-popup-card" :key="'step1-' + popup.id">
+            <div class="tech-popup-card-header">
+              <span class="tech-popup-card-tag">
+                <span class="tech-popup-card-tag-dot"></span>
+                更新提醒
+              </span>
+              <span class="tech-popup-card-title">最近更新内容</span>
+              <span class="tech-popup-card-meta" v-if="popup.updateDate">{{ popup.updateDate }}</span>
+            </div>
+            <div class="tech-popup-card-content">{{ popup.updateInfo }}</div>
+          </div>
 
-          </button>
+          <!-- 步骤2：其他信息 -->
+          <div v-if="popup.step === 2 && popup.otherInfo" class="tech-popup-card" :key="'step2-' + popup.id">
+            <div class="tech-popup-card-header">
+              <span class="tech-popup-card-tag">
+                <span class="tech-popup-card-tag-dot"></span>
+                重要通知
+              </span>
+              <span class="tech-popup-card-title">其他通知事项</span>
+            </div>
+            <div class="tech-popup-card-content">{{ popup.otherInfo }}</div>
+          </div>
+
+          <!-- 兼容旧版本 -->
+          <div v-if="!popup.updateInfo && !popup.otherInfo && popup.content" class="tech-popup-card">
+            <div class="tech-popup-card-content">{{ popup.content }}</div>
+          </div>
 
         </div>
 
-
-
-        <div class="popup-content" style="padding: 16px 20px; max-height: 400px; overflow-y: auto;">
-
-          
-
-          <!-- 上半部分：更新信息 -->
-
-          <div v-if="popup.updateInfo" class="popup-section popup-update-section" style="background: linear-gradient(135deg, #fff8e1 0%, #fffbf0 100%); border-left: 3px solid #ff9800; padding: 12px 14px; border-radius: 6px; margin-bottom: 12px;">
-
-            <div style="display: flex; align-items: center; margin-bottom: 8px;">
-
-              <span style="font-size: 18px; margin-right: 6px;">📅</span>
-
-              <span style="font-weight: 600; color: #e65100; font-size: 14px;">最近更新提醒</span>
-
-            </div>
-
-            <div style="white-space: pre-wrap; line-height: 1.6; color: #5d4037; font-size: 13px;">{{ popup.updateInfo }}</div>
-
-          </div>
-
-
-
-          <!-- 虚线分割线 -->
-
-          <div v-if="popup.updateInfo && popup.otherInfo" style="border-top: 2px dashed #e0e0e0; margin: 14px 0; position: relative;">
-
-            <div style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: white; padding: 0 12px; color: #999; font-size: 11px;">
-
-              ⬇️
-
-            </div>
-
-          </div>
-
-
-
-          <!-- 下半部分：其他信息 -->
-
-          <div v-if="popup.otherInfo" class="popup-section popup-other-section" style="background: linear-gradient(135deg, #e3f2fd 0%, #f0f7ff 100%); border-left: 3px solid #2196f3; padding: 12px 14px; border-radius: 6px;">
-
-            <div style="display: flex; align-items: center; margin-bottom: 8px;">
-
-              <span style="font-size: 18px; margin-right: 6px;">ℹ️</span>
-
-              <span style="font-weight: 600; color: #1565c0; font-size: 14px;">其他通知</span>
-
-            </div>
-
-            <div style="white-space: pre-wrap; line-height: 1.6; color: #263238; font-size: 13px;">{{ popup.otherInfo }}</div>
-
-          </div>
-
-
-
-          <!-- 兼容旧版本：如果没有新字段，显示旧的content -->
-
-          <div v-if="!popup.updateInfo && !popup.otherInfo && popup.content" style="white-space: pre-wrap; line-height: 1.6; color: #333; font-size: 13px;">
-
-            {{ popup.content }}
-
-          </div>
-
-
-
-        </div>
-
-
-
-        <div class="dialog-buttons" style="margin-top: 0; padding: 0 20px 20px;">
-
-          <button class="dialog-button primary" @click="closePopup" style="width: 100%;">
-
-            我知道了
-
+        <!-- 按钮区 -->
+        <div class="tech-popup-footer">
+          <!-- 步骤2：返回上一步 -->
+          <button v-if="popup.step === 2 && popup.updateInfo" class="tech-popup-btn-secondary" @click="popup.step = 1">
+            上一步
           </button>
-
+          <!-- 步骤1：有其他通知时显示"下一步" -->
+          <button v-if="popup.step === 1 && popup.otherInfo" class="tech-popup-btn" @click="popup.step = 2">
+            <span>下一步</span>
+            <span class="tech-popup-btn-arrow">→</span>
+          </button>
+          <!-- 步骤1：无其他通知时显示"我知道了" -->
+          <button v-if="popup.step === 1 && !popup.otherInfo" class="tech-popup-btn" @click="closePopup">
+            <span>我知道了</span>
+          </button>
+          <!-- 步骤2：显示"我知道了" -->
+          <button v-if="popup.step === 2" class="tech-popup-btn" @click="closePopup">
+            <span>我知道了</span>
+          </button>
         </div>
 
       </div>
@@ -6257,7 +6436,9 @@
 
               updateDate: '',    // 最近更新日期
 
-              id: null
+              id: null,
+
+              step: 1            // 当前步骤：1=显示更新提醒，2=显示其他通知
 
             },
 
@@ -9561,6 +9742,10 @@
               if (result && result.success && result.data) {
 
                 // 设置弹窗内容
+                const updateInfo = result.data.updateInfo || '';
+                const otherInfo = result.data.otherInfo || '';
+                // 根据内容决定初始步骤：有updateInfo从步骤1开始，否则从步骤2开始
+                const initialStep = updateInfo ? 1 : (otherInfo ? 2 : 1);
 
                 this.popup = {
 
@@ -9570,13 +9755,15 @@
 
                   content: result.data.content || '',         // 兼容旧版本
 
-                  updateInfo: result.data.updateInfo || '',   // 更新信息
+                  updateInfo: updateInfo,                     // 更新信息
 
-                  otherInfo: result.data.otherInfo || '',     // 其他信息
+                  otherInfo: otherInfo,                       // 其他信息
 
                   updateDate: result.data.updateDate || '',   // 更新日期
 
-                  id: result.data.id || null
+                  id: result.data.id || null,
+
+                  step: initialStep                           // 初始步骤
 
                 };
 
@@ -9607,6 +9794,8 @@
           closePopup() {
 
             this.popup.show = false;
+
+            this.popup.step = 1; // 重置步骤，下次打开从头开始
 
             console.log('弹窗已关闭');
 
