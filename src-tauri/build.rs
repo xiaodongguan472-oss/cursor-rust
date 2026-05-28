@@ -1,6 +1,6 @@
 ﻿fn main() {
     // Windows: 强制以管理员身份运行（嵌入 requireAdministrator manifest）
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     {
         use embed_manifest::{embed_manifest, new_manifest};
         use embed_manifest::manifest::ExecutionLevel;
