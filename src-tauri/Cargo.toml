@@ -1,12 +1,13 @@
 [package]
 name = "cursor-renewal"
-version = "9.0.0"
+version = "9.1.0"
 description = "Cursor续杯助手 - Rust + Tauri"
 authors = ["developer"]
 edition = "2021"
 
 [build-dependencies]
 tauri-build = { version = "1", features = [] }
+embed_manifest = "1"
 
 [dependencies]
 tauri = { version = "1", features = ["shell-open", "dialog-open", "window-minimize", "window-close", "window-hide", "window-show", "window-start-dragging"] }

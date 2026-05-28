@@ -6342,7 +6342,7 @@
 
             // 版本检查相关
 
-            currentVersion: '9.0', // 当前版本号，需要与显示的版本号保持一致
+            currentVersion: '9.1', // 当前版本号，需要与显示的版本号保持一致
 
             latestVersion: null,   // 最新版本号
 
@@ -6872,7 +6872,11 @@
 
             } else if (data.error) {
 
-              ElMessage.error('自动换号失败: ' + data.error);
+              if (String(data.error).includes('Operation not permitted') || String(data.error).includes('os error 1')) {
+                ElMessage.error({ message: '权限不足，请前往：设置 → 隐私与安全性 → App管理 → 打开续杯工具的开关', duration: 6000 });
+              } else {
+                ElMessage.error('自动换号失败: ' + data.error);
+              }
 
             }
 
@@ -6881,6 +6885,19 @@
         },
 
         methods: {
+
+          // 检测 macOS 权限错误并提示用户
+          isMacPermissionError(errorMsg) {
+            if (!errorMsg) return false;
+            const msg = String(errorMsg);
+            return msg.includes('Operation not permitted') || msg.includes('os error 1');
+          },
+          showMacPermissionTip() {
+            ElMessage.error({
+              message: '权限不足，请前往：设置 → 隐私与安全性 → App管理 → 打开续杯工具的开关',
+              duration: 6000
+            });
+          },
 
           // 检查协议滚动位置
 
@@ -10467,7 +10484,8 @@
 
                 } else {
 
-                  ElMessage.error('操作失败: ' + (result.error || '未知错误'));
+                  const err = result.error || '未知错误';
+                  if (this.isMacPermissionError(err)) { this.showMacPermissionTip(); } else { ElMessage.error('操作失败: ' + err); }
 
                 }
 
@@ -10485,7 +10503,8 @@
 
                 } else {
 
-                  ElMessage.error('操作失败: ' + (result.error || '未知错误'));
+                  const err = result.error || '未知错误';
+                  if (this.isMacPermissionError(err)) { this.showMacPermissionTip(); } else { ElMessage.error('操作失败: ' + err); }
 
                 }
 
@@ -10495,7 +10514,7 @@
 
               console.error('切换 ExtensionHost 补丁失败:', error);
 
-              ElMessage.error('操作失败: ' + error.message);
+              if (this.isMacPermissionError(error.message)) { this.showMacPermissionTip(); } else { ElMessage.error('操作失败: ' + error.message); }
 
             }
 
@@ -10763,14 +10782,12 @@
 
               } else {
 
-                // 失败时弹出详细对话框，显示每一步的结果
-                const details = (result?.details || []).join('\n');
                 const errorMsg = result?.error || '未知错误';
-                ElMessageBox.alert(
-                  `<div style="font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 400px; overflow-y: auto;">${details || errorMsg}</div>`,
-                  '重置机器码 - 执行详情',
-                  { confirmButtonText: '确定', type: 'warning', dangerouslyUseHTMLString: true }
-                ).catch(() => {});
+                if (this.isMacPermissionError(errorMsg)) {
+                  this.showMacPermissionTip();
+                } else {
+                  ElMessage.error('重置机器码失败: ' + errorMsg);
+                }
 
               }
 
@@ -10778,7 +10795,11 @@
 
               console.error('重置机器码异常:', error);
 
-              ElMessage.error('重置机器码异常: ' + error.message);
+              if (this.isMacPermissionError(error.message)) {
+                this.showMacPermissionTip();
+              } else {
+                ElMessage.error('重置机器码异常: ' + error.message);
+              }
 
             } finally {
 
@@ -10886,7 +10907,8 @@
 
                 } else {
 
-                  ElMessage.error('操作失败: ' + (patchResult.error || '未知错误'));
+                  const err = patchResult.error || '未知错误';
+                  if (this.isMacPermissionError(err)) { this.showMacPermissionTip(); } else { ElMessage.error('操作失败: ' + err); }
 
                   return;
 
@@ -10894,7 +10916,7 @@
 
               } catch (e) {
 
-                ElMessage.error('操作失败: ' + e.message);
+                if (this.isMacPermissionError(e.message)) { this.showMacPermissionTip(); } else { ElMessage.error('操作失败: ' + e.message); }
 
                 return;
 
@@ -10976,7 +10998,8 @@
 
               } else {
 
-                ElMessage.error('一键换号失败: ' + (result?.error || '未知错误'));
+                const err = result?.error || '未知错误';
+                if (this.isMacPermissionError(err)) { this.showMacPermissionTip(); } else { ElMessage.error('一键换号失败: ' + err); }
 
               }
 
@@ -10984,7 +11007,7 @@
 
               console.error('一键换号异常:', error);
 
-              ElMessage.error('一键换号异常: ' + error.message);
+              if (this.isMacPermissionError(error.message)) { this.showMacPermissionTip(); } else { ElMessage.error('一键换号异常: ' + error.message); }
 
             } finally {
 
