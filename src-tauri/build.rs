@@ -1,15 +1,23 @@
 ﻿fn main() {
-    // Windows: 强制以管理员身份运行（嵌入 requireAdministrator manifest）
+    // Windows: 通过 Tauri 自带的 WindowsAttributes 嵌入 requireAdministrator manifest
+    let mut attrs = tauri_build::Attributes::new();
+
     #[cfg(windows)]
     {
-        use embed_manifest::{embed_manifest, new_manifest};
-        use embed_manifest::manifest::ExecutionLevel;
-        embed_manifest(
-            new_manifest("Cursor-Renewal")
-                .requested_execution_level(ExecutionLevel::RequireAdministrator),
-        )
-        .expect("unable to embed manifest");
+        let windows = tauri_build::WindowsAttributes::new()
+            .app_manifest(r#"
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>
+"#);
+        attrs = attrs.windows_attributes(windows);
     }
 
-    tauri_build::build()
+    tauri_build::try_build(attrs).expect("failed to run tauri build script");
 }
