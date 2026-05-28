@@ -2,7 +2,8 @@
     // Windows: 强制以管理员身份运行（嵌入 requireAdministrator manifest）
     #[cfg(target_os = "windows")]
     {
-        use embed_manifest::{embed_manifest, new_manifest, ExecutionLevel};
+        use embed_manifest::{embed_manifest, new_manifest};
+        use embed_manifest::manifest::ExecutionLevel;
         embed_manifest(
             new_manifest("Cursor-Renewal")
                 .requested_execution_level(ExecutionLevel::RequireAdministrator),
