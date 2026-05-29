@@ -98,6 +98,12 @@
 
   <style>
 
+    :root {
+
+      --ui-scale: 1;
+
+    }
+
     * {
 
       margin: 0;
@@ -188,6 +194,8 @@
 
       z-index: 1;
 
+      transform-origin: top left;
+
     }
 
     .header {
@@ -197,6 +205,8 @@
       align-items: center;
 
       justify-content: space-between;
+
+      flex-wrap: nowrap;
 
       margin-bottom: 24px;
 
@@ -284,7 +294,11 @@
 
       margin-bottom: 4px;
 
-      letter-spacing: -0.5px;
+      letter-spacing: 0;
+
+      line-height: 1.15;
+
+      white-space: nowrap;
 
       text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 
@@ -297,6 +311,8 @@
       font-size: 14px;
 
       font-weight: 500;
+
+      white-space: nowrap;
 
     }
 
@@ -613,6 +629,12 @@
 
     .header-help-button {
 
+      display: flex;
+
+      align-items: center;
+
+      justify-content: center;
+
       cursor: pointer;
 
       color: white;
@@ -634,6 +656,14 @@
       font-size: 13px;
 
       font-weight: 600;
+
+      line-height: 1.2;
+
+      min-height: 40px;
+
+      white-space: nowrap;
+
+      flex-shrink: 0;
 
     }
 
@@ -1423,6 +1453,8 @@
 
       color: #475569;
 
+      white-space: nowrap;
+
     }
 
     .seamless-value {
@@ -1432,6 +1464,16 @@
       font-weight: 600;
 
       color: #334155;
+
+      max-width: 170px;
+
+      overflow: hidden;
+
+      text-overflow: ellipsis;
+
+      white-space: nowrap;
+
+      text-align: right;
 
     }
 
@@ -1452,6 +1494,10 @@
       cursor: pointer;
 
       user-select: none;
+
+      white-space: nowrap;
+
+      flex-shrink: 0;
 
     }
 
@@ -1576,6 +1622,12 @@
       transition: all 0.3s ease;
 
       margin-top: 8px;
+
+      line-height: 1.2;
+
+      min-height: 34px;
+
+      white-space: nowrap;
 
     }
 
@@ -2576,7 +2628,20 @@
 
       margin-top: 30px;
 
-      height: calc(100vh - 30px);
+      width: calc(100% / var(--ui-scale, 1));
+
+      height: calc((100vh - 30px) / var(--ui-scale, 1));
+
+      transform: scale(var(--ui-scale, 1));
+
+    }
+
+    .header > div:first-child,
+    .header > div:last-child {
+
+      min-width: 0;
+
+      flex-shrink: 0;
 
     }
 
@@ -2655,6 +2720,10 @@
       backdrop-filter: blur(4px);
 
       cursor: help;
+
+      white-space: nowrap;
+
+      flex-shrink: 0;
 
     }
 
@@ -6300,6 +6369,50 @@
 
     const { ElMessage, ElMessageBox } = ElementPlus;
 
+    function applyResponsiveScale() {
+      const root = document.documentElement;
+      const app = document.getElementById('app');
+      if (!root || !app) return;
+
+      if (window.__scaleFrame) {
+        cancelAnimationFrame(window.__scaleFrame);
+      }
+
+      window.__scaleFrame = requestAnimationFrame(() => {
+        root.style.setProperty('--ui-scale', '1');
+
+        requestAnimationFrame(() => {
+          const titlebarHeight = 30;
+          const availableWidth = Math.max(1, window.innerWidth);
+          const availableHeight = Math.max(1, window.innerHeight - titlebarHeight);
+          const header = app.querySelector('.header');
+          const main = app.querySelector('.main-content');
+          const neededWidth = Math.max(
+            920,
+            app.scrollWidth,
+            header ? header.scrollWidth : 0,
+            main ? main.scrollWidth : 0
+          );
+          const neededHeight = Math.max(680, app.scrollHeight);
+          let scale = Math.min(1, availableWidth / neededWidth, availableHeight / neededHeight);
+
+          if (!Number.isFinite(scale) || scale <= 0) {
+            scale = 1;
+          }
+
+          root.style.setProperty('--ui-scale', String(Math.max(0.82, scale)));
+        });
+      });
+    }
+
+    window.applyResponsiveScale = applyResponsiveScale;
+    window.addEventListener('resize', applyResponsiveScale);
+    window.addEventListener('load', () => {
+      applyResponsiveScale();
+      setTimeout(applyResponsiveScale, 300);
+      setTimeout(applyResponsiveScale, 1000);
+    });
+
 
 
     // 检查Vue是否正确加载
@@ -7007,6 +7120,14 @@
         async mounted() {
 
           await this.initApp();
+
+          this.$nextTick(() => {
+            if (typeof window.applyResponsiveScale === 'function') {
+              window.applyResponsiveScale();
+              setTimeout(window.applyResponsiveScale, 300);
+              setTimeout(window.applyResponsiveScale, 1000);
+            }
+          });
 
           // 窗口拖动：监听 custom-titlebar 和 header 的 mousedown 事件
           this.$nextTick(() => {

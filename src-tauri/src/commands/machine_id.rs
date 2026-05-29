@@ -82,6 +82,37 @@ impl FullMachineIds {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn set_file_readonly(path: &Path, readonly: bool) -> Result<(), String> {
+    let mut permissions = fs::metadata(path)
+        .map_err(|e| format!("获取文件属性失败: {}", e))?
+        .permissions();
+    permissions.set_readonly(readonly);
+    fs::set_permissions(path, permissions).map_err(|e| format!("设置文件只读属性失败: {}", e))
+}
+
+#[cfg(target_os = "windows")]
+fn write_storage_json_for_reset(path: &Path, content: &str) -> Result<(), String> {
+    let was_readonly = fs::metadata(path)
+        .map_err(|e| format!("获取storage.json属性失败: {}", e))?
+        .permissions()
+        .readonly();
+
+    if was_readonly {
+        set_file_readonly(path, false)
+            .map_err(|e| format!("移除storage.json只读属性失败: {}", e))?;
+    }
+
+    if let Err(e) = fs::write(path, content) {
+        if was_readonly {
+            let _ = set_file_readonly(path, true);
+        }
+        return Err(format!("写入storage.json失败: {}", e));
+    }
+
+    set_file_readonly(path, true).map_err(|e| format!("恢复storage.json只读属性失败: {}", e))
+}
+
 /// Reset storage.json machine IDs（1:1 对齐 MyCursor：原子写入 + 5 核心字段）
 ///
 /// 写入字段（与 MyCursor write_machine_ids 完全一致 + 我们补充的 2 个 telemetry 字段）：
@@ -151,11 +182,19 @@ fn reset_storage_machine_ids_with(ids: &FullMachineIds) -> ResetResult {
         // === 原子写入（与 MyCursor write_all 完全一致）===
         // 1. 写到 .tmp 临时文件
         // 2. rename 原子替换
-        let tmp = storage_path.with_extension("json.tmp");
-        fs::write(&tmp, &updated)
-            .map_err(|e| format!("写入临时文件失败: {}", e))?;
-        fs::rename(&tmp, &storage_path)
-            .map_err(|e| format!("替换storage.json失败: {}", e))?;
+        #[cfg(target_os = "windows")]
+        {
+            write_storage_json_for_reset(&storage_path, &updated)?;
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let tmp = storage_path.with_extension("json.tmp");
+            fs::write(&tmp, &updated)
+                .map_err(|e| format!("写入临时文件失败: {}", e))?;
+            fs::rename(&tmp, &storage_path)
+                .map_err(|e| format!("替换storage.json失败: {}", e))?;
+        }
         Ok(())
     })();
 

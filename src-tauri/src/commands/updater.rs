@@ -1,6 +1,6 @@
+use super::utils;
 use std::env;
 use std::fs;
-use super::utils;
 
 /// 下载更新文件并启动平台安装脚本
 #[tauri::command]
@@ -19,7 +19,12 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
         }
     };
 
-    utils::dlog!("[Updater] === download_and_update called === url={}, file={}, pid={}", url, file_name, pid);
+    utils::dlog!(
+        "[Updater] === download_and_update called === url={}, file={}, pid={}",
+        url,
+        file_name,
+        pid
+    );
     utils::dlog!("[Updater] current_exe={:?}", current_exe);
 
     // 使用系统临时目录存放下载文件和脚本，不污染 exe 所在目录
@@ -48,7 +53,10 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
 
     let response = match client
         .get(&url)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        )
         .send()
         .await
     {
@@ -106,16 +114,16 @@ pub async fn download_and_update(url: String, file_name: String) -> serde_json::
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        const DETACHED_PROCESS: u32 = 0x00000008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
 
         let script_path = script_path.with_extension("ps1");
+        let task_name = format!("CursorUpdate_{}", pid);
 
-        // 所有参数直接硬编码进脚本
+        // 所有参数直接硬编码进脚本，避免 schtasks /TR 的 261 字符限制
         let ps_content = format!(
             r#"$PidToWait = {pid}
 $ArchivePath = '{archive}'
 $TargetExecutable = '{target}'
+$TaskName = '{task}'
 
 try {{
   if (-not (Test-Path -LiteralPath $ArchivePath)) {{
@@ -132,12 +140,14 @@ try {{
 }} catch {{
 }} finally {{
   Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction SilentlyContinue
+  schtasks /Delete /TN $TaskName /F 2>$null
   Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 }}
 "#,
             pid = pid,
             archive = temp_file.to_string_lossy().replace('\'', "''"),
             target = current_exe.to_string_lossy().replace('\'', "''"),
+            task = task_name,
         );
 
         // 写入 PS1 脚本（加 UTF-8 BOM 头，确保 PowerShell 正确读取中文路径）
@@ -154,32 +164,92 @@ try {{
         }
         utils::dlog!("[Updater] PS1脚本已写入: {:?}", script_path);
 
-        // 直接启动脱离进程的 PowerShell，不再依赖 schtasks（避免 GBK 编码和时间格式问题）
-        let spawn_result = std::process::Command::new("powershell")
-            .args(&[
-                "-NoProfile",
-                "-ExecutionPolicy", "Bypass",
-                "-WindowStyle", "Hidden",
-                "-File", &script_path.to_string_lossy(),
-            ])
-            .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
-            .spawn();
+        // schtasks /TR 只需要短命令: powershell -File "path.ps1"
+        let task_cmd = format!(
+            r#"powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{}""#,
+            script_path.to_string_lossy()
+        );
 
-        match spawn_result {
-            Ok(_child) => {
-                utils::dlog!("[Updater] PowerShell 更新脚本已启动（脱离进程），3秒后退出主程序");
+        utils::dlog!(
+            "[Updater] task_name={}, task_cmd len={}",
+            task_name,
+            task_cmd.len()
+        );
+        utils::dlog!("[Updater] task_cmd={}", task_cmd);
+
+        // 创建一次性计划任务
+        let create_result = std::process::Command::new("schtasks")
+            .args(&[
+                "/Create", "/TN", &task_name, "/TR", &task_cmd, "/SC", "ONCE", "/ST", "00:00",
+                "/F", "/RL", "HIGHEST",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        match create_result {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                utils::dlog!(
+                    "[Updater] schtasks /Create status={}, stdout={}, stderr={}",
+                    output.status,
+                    stdout.trim(),
+                    stderr.trim()
+                );
+                if !output.status.success() {
+                    let _ = fs::remove_file(&temp_file);
+                    let _ = fs::remove_file(&script_path);
+                    return serde_json::json!({
+                        "success": false,
+                        "message": format!("创建计划任务失败: {}", stderr)
+                    });
+                }
+            }
+            Err(e) => {
+                utils::dlog!("[Updater] ERROR: schtasks命令执行失败: {}", e);
+                let _ = fs::remove_file(&temp_file);
+                let _ = fs::remove_file(&script_path);
+                return serde_json::json!({
+                    "success": false,
+                    "message": format!("执行 schtasks 失败: {}", e)
+                });
+            }
+        }
+
+        // 立即运行计划任务
+        utils::dlog!("[Updater] 执行 schtasks /Run ...");
+        let run_result = std::process::Command::new("schtasks")
+            .args(&["/Run", "/TN", &task_name])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        match run_result {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                utils::dlog!(
+                    "[Updater] schtasks /Run status={}, stdout={}, stderr={}",
+                    output.status,
+                    stdout.trim(),
+                    stderr.trim()
+                );
+                utils::dlog!("[Updater] 计划任务已启动，3秒后强制退出主程序");
                 std::thread::spawn(|| {
                     std::thread::sleep(std::time::Duration::from_secs(3));
                     std::process::exit(0);
                 });
             }
             Err(e) => {
-                utils::dlog!("[Updater] ERROR: 启动 PowerShell 失败: {}", e);
+                utils::dlog!("[Updater] ERROR: schtasks /Run 失败: {}", e);
+                let _ = std::process::Command::new("schtasks")
+                    .args(&["/Delete", "/TN", &task_name, "/F"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
                 let _ = fs::remove_file(&temp_file);
                 let _ = fs::remove_file(&script_path);
                 return serde_json::json!({
                     "success": false,
-                    "message": format!("启动更新脚本失败: {}", e)
+                    "message": format!("运行计划任务失败: {}", e)
                 });
             }
         }
@@ -266,10 +336,7 @@ echo "[Updater] 完成！"
         }
 
         utils::dlog!("[Updater] 启动 shell 安装脚本: {:?}", script_path);
-        match std::process::Command::new("sh")
-            .arg(&script_path)
-            .spawn()
-        {
+        match std::process::Command::new("sh").arg(&script_path).spawn() {
             Ok(_) => {
                 utils::dlog!("[Updater] shell 安装脚本已启动，等待主程序退出后执行替换");
             }
@@ -339,10 +406,7 @@ nohup "$TARGET_EXECUTABLE" >/dev/null 2>&1 &
         let _ = fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755));
 
         utils::dlog!("[Updater] 启动 shell 安装脚本: {:?}", script_path);
-        match std::process::Command::new("sh")
-            .arg(&script_path)
-            .spawn()
-        {
+        match std::process::Command::new("sh").arg(&script_path).spawn() {
             Ok(_) => {
                 utils::dlog!("[Updater] shell 安装脚本已启动，等待主程序退出后执行替换");
             }
