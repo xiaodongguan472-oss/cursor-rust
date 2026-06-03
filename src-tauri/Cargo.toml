@@ -1,6 +1,6 @@
 [package]
 name = "cursor-renewal"
-version = "9.2.0"
+version = "9.3.0"
 description = "Cursor续杯助手 - Rust + Tauri"
 authors = ["developer"]
 edition = "2021"
@@ -35,6 +35,11 @@ urlencoding = "2"
 libc = "0.2"
 # === 反逆向 / 字符串混淆 ===
 obfstr = "0.4"
+# === 模型解锁 MITM 代理 ===
+hudsucker = { version = "0.24", default-features = false, features = ["decoder", "rcgen-ca", "rustls-client", "http2"] }
+rcgen = { version = "0.14", features = ["x509-parser"] }
+http-body-util = "0.1"
+time = "0.3"
 
 [features]
 default = ["custom-protocol"]

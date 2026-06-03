@@ -8,6 +8,7 @@ use tauri::{AppHandle, Manager};
 use super::utils;
 use super::cursor_paths;
 use super::machine_id;
+use super::unlock_mitm;
 
 static AUTO_SWITCH_ENABLED: AtomicBool = AtomicBool::new(false);
 static AUTO_SWITCH_BUSY: AtomicBool = AtomicBool::new(false);
@@ -482,6 +483,28 @@ async fn do_seamless_switch(
 
 #[tauri::command]
 pub async fn patch_ext_host() -> serde_json::Value {
+    // === 模型解锁前置步骤：保证 MITM 链路已就绪 ===
+    // 用户开启「激活无感换号」时，先确保 UI 解锁（CA + 环境变量 + settings.json + MITM）已部署。
+    // 如果已经部署过（重启程序场景），unlock_enable 内部各步骤都是幂等的，开销很小。
+    let unlock_result = tokio::task::spawn_blocking(|| {
+        unlock_mitm::enable_unlock()
+    }).await;
+    let unlock_err = match unlock_result {
+        Ok(Ok(())) => None,
+        Ok(Err(e)) => Some(e),
+        Err(e) => Some(format!("解锁任务调度失败: {}", e)),
+    };
+    if let Some(e) = unlock_err {
+        return serde_json::json!({
+            "success": false, "patched": false,
+            "error": format!("模型解锁部署失败: {}", e)
+        });
+    }
+    // MITM 需要在 tokio runtime 上启动（spawn_blocking 内不能 spawn 异步任务到代理）
+    if !unlock_mitm::is_mitm_running() {
+        let _ = unlock_mitm::start_mitm_in_background();
+    }
+
     let paths = cursor_paths::get_cursor_paths();
     let base_path = match paths.base_path {
         Some(ref bp) if paths.error.is_none() => bp.clone(),
@@ -509,7 +532,16 @@ pub async fn unpatch_ext_host() -> serde_json::Value {
         }
     };
     let install_path = cursor_paths::get_cursor_install_from_base_path(&base_path);
-    do_unpatch_ext_host(&install_path)
+    let unpatch_result = do_unpatch_ext_host(&install_path);
+
+    // === 模型解锁后置步骤：关闭 MITM、清环境变量 / settings.json / 删 CA ===
+    // 用户关闭「激活无感换号」时彻底回退：证书 + 环境变量 + 代理键都清掉。
+    unlock_mitm::stop_mitm();
+    let _ = tokio::task::spawn_blocking(|| {
+        let _ = unlock_mitm::disable_unlock();
+    }).await;
+
+    unpatch_result
 }
 
 #[tauri::command]

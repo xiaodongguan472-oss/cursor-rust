@@ -18,6 +18,14 @@ fn main() {
     commands::utils::migrate_legacy_data();
 
     tauri::Builder::default()
+        .setup(|_app| {
+            // 模型解锁自动恢复：如果用户之前开过解锁、证书还在系统信任根里，
+            // 程序启动时静默重启 MITM 代理，无需用户重新点击「激活无感换号」。
+            tauri::async_runtime::spawn(async {
+                commands::unlock_mitm::auto_restore_on_startup();
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             ipc::x0a, ipc::x0b, ipc::x0c,
             ipc::x1a, ipc::x1b,
