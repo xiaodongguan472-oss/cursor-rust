@@ -248,7 +248,7 @@
 
       height: 56px;
 
-      background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+      background: #ffffff;
 
       border-radius: 16px;
 
@@ -264,7 +264,7 @@
 
       margin-right: 16px;
 
-      box-shadow: 0 4px 20px rgba(33, 150, 243, 0.4);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
 
       transition: all 0.2s ease;
 
@@ -272,13 +272,17 @@
 
       overflow: hidden;
 
+      padding: 4px;
+
+      box-sizing: border-box;
+
     }
 
     .app-icon:hover {
 
       transform: scale(1.02);
 
-      box-shadow: 0 6px 25px rgba(33, 150, 243, 0.6);
+      box-shadow: 0 6px 25px rgba(0, 0, 0, 0.28);
 
     }
 
@@ -4655,57 +4659,7 @@
 
         <div class="app-icon">
 
-          <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-
-            <!-- 外圈刷新环 -->
-
-            <circle cx="16" cy="16" r="14" stroke="white" stroke-width="2" fill="none" opacity="0.3"/>
-
-
-
-            <!-- 主要的刷新箭头 -->
-
-            <path d="M16 4 A12 12 0 0 1 27.5 13" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-
-            <path d="M4.5 19 A12 12 0 0 1 16 28" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-
-
-
-            <!-- 箭头头部 -->
-
-            <path d="M24 10 L27.5 13 L24 16" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-
-            <path d="M8 22 L4.5 19 L8 16" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-
-
-
-            <!-- 中心的咖啡杯图标 -->
-
-            <g transform="translate(16, 16)">
-
-              <!-- 杯身 -->
-
-              <path d="M-4 -2 L4 -2 L3 4 L-3 4 Z" fill="white" fill-opacity="0.9"/>
-
-              <!-- 杯把手 -->
-
-              <path d="M4 0 L6 0 A1 1 0 0 1 6 2 L4 2" stroke="white" stroke-width="1" fill="none"/>
-
-              <!-- 咖啡液面 -->
-
-              <ellipse cx="0" cy="-1.5" rx="3.5" ry="0.8" fill="white" fill-opacity="0.6"/>
-
-              <!-- 蒸汽 -->
-
-              <path d="M-2 -4 Q-2 -5 -1.5 -5 Q-1 -5 -1 -4" stroke="white" stroke-width="1" fill="none" opacity="0.7"/>
-
-              <path d="M0 -4.5 Q0 -5.5 0.5 -5.5 Q1 -5.5 1 -4.5" stroke="white" stroke-width="1" fill="none" opacity="0.7"/>
-
-              <path d="M2 -4 Q2 -5 2.5 -5 Q3 -5 3 -4" stroke="white" stroke-width="1" fill="none" opacity="0.7"/>
-
-            </g>
-
-          </svg>
+          <img src="icon.png" alt="Cursor续杯工具" style="width: 100%; height: 100%; object-fit: contain; display: block;" draggable="false">
 
         </div>
 
@@ -5948,6 +5902,92 @@
       </div>
     </div>
 
+    <!-- Cursor 自更新检测到后，提示用户重新激活无感换号的模态窗口 -->
+    <div v-if="showPatchMissingModal" class="dialog-overlay" @click.self="dismissPatchMissingModal">
+      <div style="background: #fff; border-radius: 20px; width: 500px; max-width: 92vw; box-shadow: 0 25px 60px rgba(0,0,0,0.3); overflow: hidden; animation: dialogSlideIn 0.3s ease-out;">
+        <!-- 顶部装饰：橙色警示渐变 -->
+        <div style="padding: 28px 28px 22px; text-align: center; background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%); color: white;">
+          <div style="width: 60px; height: 60px; margin: 0 auto 14px; background: rgba(255,255,255,0.22); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 32px; backdrop-filter: blur(8px);">⚠️</div>
+          <div style="font-size: 20px; font-weight: 700; letter-spacing: 0.5px;">检测到 Cursor 已更新</div>
+          <div style="font-size: 13px; opacity: 0.92; margin-top: 8px; line-height: 1.5;">
+            Cursor 自动更新后，无感换号补丁已被覆盖<br>
+            请按以下步骤<span style="font-weight: 700;">重新激活</span>
+          </div>
+        </div>
+        <!-- 内容：步骤式 -->
+        <div style="padding: 22px 28px 8px;">
+          <!-- 步骤 1：关闭 Cursor -->
+          <div style="display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); border-radius: 12px; border-left: 4px solid #ef4444; margin-bottom: 10px;">
+            <div style="flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: #ef4444; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;">1</div>
+            <div style="flex: 1; font-size: 14.5px; color: #1e293b; line-height: 1.55;">
+              确保<span style="color: #ef4444; font-weight: 700;">完全关闭</span> Cursor（包括托盘 / 后台进程）
+            </div>
+          </div>
+          <!-- 步骤 2：关闭再开启开关 -->
+          <div style="display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-radius: 12px; border-left: 4px solid #f59e0b; margin-bottom: 10px;">
+            <div style="flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: #f59e0b; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;">2</div>
+            <div style="flex: 1; font-size: 14.5px; color: #1e293b; line-height: 1.55;">
+              将 <span style="color: #f59e0b; font-weight: 700;">「激活无感换号」</span> 开关 <span style="font-weight: 700;">关闭</span>，再 <span style="font-weight: 700;">重新打开</span>
+            </div>
+          </div>
+          <!-- 步骤 3：手动重启 Cursor -->
+          <div style="display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%); border-radius: 12px; border-left: 4px solid #6366f1; margin-bottom: 4px;">
+            <div style="flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: #6366f1; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;">3</div>
+            <div style="flex: 1; font-size: 14.5px; color: #1e293b; line-height: 1.55;">
+              <span style="color: #6366f1; font-weight: 700;">手动启动 Cursor</span>，新补丁即生效
+            </div>
+          </div>
+          <!-- Cursor 版本号（可选展示） -->
+          <div v-if="patchMissingCursorVersion" style="margin-top: 14px; padding: 10px 14px; background: #f8fafc; border-radius: 10px; font-size: 12.5px; color: #64748b; text-align: center;">
+            当前 Cursor 版本：<span style="font-weight: 600; color: #334155;">{{ patchMissingCursorVersion }}</span>
+          </div>
+        </div>
+        <!-- 按钮 -->
+        <div style="padding: 18px 28px 24px;">
+          <button @click="dismissPatchMissingModal"
+            style="width: 100%; padding: 13px 24px; background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%); color: white; border: none; border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 14px rgba(234,88,12,0.32); transition: all 0.2s;"
+            onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 6px 20px rgba(234,88,12,0.45)';"
+            onmouseout="this.style.transform=''; this.style.boxShadow='0 4px 14px rgba(234,88,12,0.32)';">
+            我知道了
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 重置机器码确认模态 -->
+    <div v-if="showResetMachineIdsModal" class="dialog-overlay" @click.self="cancelResetMachineIds">
+      <div style="background: #fff; border-radius: 20px; width: 440px; max-width: 92vw; box-shadow: 0 25px 60px rgba(0,0,0,0.25); overflow: hidden; animation: dialogSlideIn 0.3s ease-out;">
+        <!-- 顶部装饰：蓝色提示渐变 -->
+        <div style="padding: 26px 28px 20px; text-align: center; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white;">
+          <div style="width: 56px; height: 56px; margin: 0 auto 14px; background: rgba(255,255,255,0.22); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 28px; backdrop-filter: blur(8px);">💡</div>
+          <div style="font-size: 19px; font-weight: 700; letter-spacing: 0.5px;">操作提示</div>
+        </div>
+        <!-- 内容 -->
+        <div style="padding: 26px 28px 10px;">
+          <div style="background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%); border-radius: 12px; border-left: 4px solid #6366f1; padding: 16px 18px; font-size: 14.5px; color: #1e293b; line-height: 1.7;">
+            <span style="color: #2563eb; font-weight: 700;">重置机器码成功后</span>，<br>
+            请再点击 <span style="color: #6366f1; font-weight: 700; white-space: nowrap;">「无感换号」</span> 按钮 ——<br>
+            <span style="color: #64748b; font-size: 13.5px;">是否继续？</span>
+          </div>
+        </div>
+        <!-- 按钮 -->
+        <div style="padding: 18px 28px 24px; display: flex; gap: 12px;">
+          <button @click="cancelResetMachineIds"
+            style="flex: 1; padding: 12px 22px; background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; border-radius: 12px; font-size: 14.5px; font-weight: 600; cursor: pointer; transition: all 0.18s;"
+            onmouseover="this.style.background='#e2e8f0'; this.style.borderColor='#cbd5e1';"
+            onmouseout="this.style.background='#f1f5f9'; this.style.borderColor='#e2e8f0';">
+            取消
+          </button>
+          <button @click="confirmResetMachineIds"
+            style="flex: 1.4; padding: 12px 22px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border: none; border-radius: 12px; font-size: 14.5px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 14px rgba(59,130,246,0.32); transition: all 0.2s;"
+            onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 6px 20px rgba(59,130,246,0.45)';"
+            onmouseout="this.style.transform=''; this.style.boxShadow='0 4px 14px rgba(59,130,246,0.32)';">
+            确定继续
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Cursor初始化提示框 -->
 
     <div v-if="showCursorInitAlert" class="cursor-init-alert-overlay">
@@ -6604,6 +6644,15 @@
             // 无感换号激活提示框
             showSeamlessActivatedModal: false,
 
+            // Cursor 自动更新检测：补丁失效模态
+            showPatchMissingModal: false,
+            patchMissingCursorVersion: '',
+            // 用户已在本次会话主动忽略一次 → 避免持续轰炸；用户切换开关重置
+            patchMissingDismissedThisSession: false,
+
+            // 重置机器码：操作前确认模态
+            showResetMachineIdsModal: false,
+
             // Cursor未初始化提示框
 
             showCursorInitAlert: false,
@@ -7181,6 +7230,19 @@
               }
 
             }
+
+          });
+
+          // 监听补丁失效通知：Cursor 自更新覆盖了我们的 ExtHost 注入后，后端检测到后通过本事件通知前端弹模态
+
+          ipcRenderer.on('patch-missing-alert', (event, data) => {
+
+            // 模态已经在显示 / 用户在本次会话已经主动关闭过 → 不打扰
+            if (this.showPatchMissingModal) return;
+            if (this.patchMissingDismissedThisSession) return;
+
+            this.patchMissingCursorVersion = (data && data.version) || '';
+            this.showPatchMissingModal = true;
 
           });
 
@@ -10752,11 +10814,28 @@
 
 
 
+          // 关闭「Cursor 自更新检测」模态：用户表示已知晓，本次会话不再弹
+          // —— 等用户切换无感换号开关（关再开）后，dismissed 标记会被重置，下次再检测到才会重弹
+
+          dismissPatchMissingModal() {
+
+            this.showPatchMissingModal = false;
+
+            this.patchMissingDismissedThisSession = true;
+
+          },
+
+
+
           // 切换 ExtensionHost 补丁
 
           async toggleExtHostPatch() {
 
             if (this.seamlessSwitching) return;
+
+            // 用户主动切换开关 → 重置「已忽略」标记，让下一次检测到失效可以再弹模态
+
+            this.patchMissingDismissedThisSession = false;
 
 
 
@@ -11050,29 +11129,35 @@
 
 
 
-          // 重置机器码
+          // 重置机器码 —— 点击按钮时只显示确认模态，真正的执行逻辑在 confirmResetMachineIds 里
 
           async resetMachineIds() {
 
             if (this.resettingMachineIds) return;
 
-            try {
+            this.showResetMachineIdsModal = true;
 
-              await ElMessageBox.confirm(
+          },
 
-                '请先点击无感换号再执行重置机器码，是否继续？',
 
-                '提示',
 
-                { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+          // 用户在确认模态点「取消」
 
-              );
+          cancelResetMachineIds() {
 
-            } catch {
+            this.showResetMachineIdsModal = false;
 
-              return;
+          },
 
-            }
+
+
+          // 用户在确认模态点「确定继续」—— 执行真正的重置机器码
+
+          async confirmResetMachineIds() {
+
+            this.showResetMachineIdsModal = false;
+
+            if (this.resettingMachineIds) return;
 
             this.resettingMachineIds = true;
 

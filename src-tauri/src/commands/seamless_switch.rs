@@ -14,6 +14,10 @@ static AUTO_SWITCH_ENABLED: AtomicBool = AtomicBool::new(false);
 static AUTO_SWITCH_BUSY: AtomicBool = AtomicBool::new(false);
 static AUTO_SWITCH_CARD_CODE: Mutex<Option<String>> = Mutex::new(None);
 
+// 自动重补丁监控 —— 检测 Cursor 自更新覆盖 extensionHostProcess.js 后自动重新注入
+static AUTO_REPATCH_ENABLED: AtomicBool = AtomicBool::new(false);
+const AUTO_REPATCH_INTERVAL_SECS: u64 = 67;
+
 const EH_PATCH_START: &str = "/* MOCURSO_EH_PATCH_START */";
 const EH_PATCH_END: &str = "/* MOCURSO_EH_PATCH_END */";
 const CURSOR_API: &str = "https://api2.cursor.sh";
@@ -482,7 +486,7 @@ async fn do_seamless_switch(
 // ========== Tauri commands ==========
 
 #[tauri::command]
-pub async fn patch_ext_host() -> serde_json::Value {
+pub async fn patch_ext_host(app: AppHandle) -> serde_json::Value {
     // === 模型解锁前置步骤：保证 MITM 链路已就绪 ===
     // 用户开启「激活无感换号」时，先确保 UI 解锁（CA + 环境变量 + settings.json + MITM）已部署。
     // 如果已经部署过（重启程序场景），unlock_enable 内部各步骤都是幂等的，开销很小。
@@ -516,11 +520,21 @@ pub async fn patch_ext_host() -> serde_json::Value {
         }
     };
     let install_path = cursor_paths::get_cursor_install_from_base_path(&base_path);
-    do_patch_ext_host(&install_path)
+    let result = do_patch_ext_host(&install_path);
+
+    // 补丁注入成功（或已存在）→ 启动自动重补监控
+    if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+        start_auto_repatch_monitor(app);
+    }
+
+    result
 }
 
 #[tauri::command]
 pub async fn unpatch_ext_host() -> serde_json::Value {
+    // 先停掉自动重补监控（否则刚卸下来又被自动补回去）
+    stop_auto_repatch_monitor();
+
     let paths = cursor_paths::get_cursor_paths();
     let base_path = match paths.base_path {
         Some(ref bp) if paths.error.is_none() => bp.clone(),
@@ -545,12 +559,19 @@ pub async fn unpatch_ext_host() -> serde_json::Value {
 }
 
 #[tauri::command]
-pub async fn check_ext_host_patched() -> bool {
+pub async fn check_ext_host_patched(app: AppHandle) -> bool {
     let paths = cursor_paths::get_cursor_paths();
     if let Some(ref bp) = paths.base_path {
         if paths.error.is_none() {
             let install_path = cursor_paths::get_cursor_install_from_base_path(bp);
-            return do_check_ext_host_patched(&install_path);
+            let patched = do_check_ext_host_patched(&install_path);
+            // 覆盖场景：用户重开工具时，前端 initSeamlessSwitch 会先调这个；
+            // 如果检测到 patch 还在，就把自动重补监控也拉起来 —— 否则用户
+            // 关掉工具再开就丢监控了。重复 start 是幂等的（内部 was_enabled 守卫）。
+            if patched {
+                start_auto_repatch_monitor(app);
+            }
+            return patched;
         }
     }
     false
@@ -605,8 +626,15 @@ pub async fn seamless_switch_cmd(
 
 #[tauri::command]
 pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json::Value {
-    // 1. Check ExtHost patch status
-    let patched = check_ext_host_patched().await;
+    // 1. Check ExtHost patch status —— 这里只读状态，不触发自动重补监控
+    let paths = cursor_paths::get_cursor_paths();
+    let patched = match paths.base_path {
+        Some(ref bp) if paths.error.is_none() => {
+            let install_path = cursor_paths::get_cursor_install_from_base_path(bp);
+            do_check_ext_host_patched(&install_path)
+        }
+        _ => false,
+    };
     if !patched {
         return serde_json::json!({
             "success": false,
@@ -844,6 +872,92 @@ async fn usage_monitor_loop(app: AppHandle) {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     }
+}
+
+// ========== 自动重补丁监控（应对 Cursor 自更新覆盖 extensionHostProcess.js）==========
+//
+// Cursor 用 Squirrel 静默后台下载更新，重启时整个替换 resources/app/ 目录。
+// 这会冲掉我们在 extensionHostProcess.js 里的 MOCURSO_EH_PATCH_START 注入块。
+// 工具如果一直开着，要能自动发现并提醒用户。
+//
+// 策略（用户决定）：
+//   - 67s 间隔轮询（避开 60s 缓存窗）
+//   - 仅在「激活无感换号」开启时启动；关闭时停掉
+//   - 检测到补丁缺失 → emit `patch-missing-alert` 事件，由前端弹模态窗口提示用户手动
+//     重新激活无感换号（关闭再开启）+ 重启 Cursor
+//   - 后端只在「连续缺失」中的首次发出 alert，避免每 67s 反复推；用户重新打补丁后状态
+//     回到 patched，下次再缺失时重新触发
+
+/// 标记上一次 tick 时补丁是否缺失，用于去重 alert
+static AUTO_REPATCH_LAST_MISSING: AtomicBool = AtomicBool::new(false);
+
+async fn auto_repatch_loop(app: AppHandle) {
+    // 首次延迟 30 秒，避开刚刚 patch 完成的窗口（避免误触发）
+    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+    while AUTO_REPATCH_ENABLED.load(Ordering::SeqCst) {
+        auto_repatch_tick(&app);
+
+        // 67s 间隔，每秒检查 enabled 标志快速响应关闭
+        for _ in 0..AUTO_REPATCH_INTERVAL_SECS {
+            if !AUTO_REPATCH_ENABLED.load(Ordering::SeqCst) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    }
+}
+
+fn auto_repatch_tick(app: &AppHandle) {
+    let paths = cursor_paths::get_cursor_paths();
+    if paths.error.is_some() {
+        return;
+    }
+    let base_path = match paths.base_path {
+        Some(bp) => bp,
+        None => return,
+    };
+    let install_path = cursor_paths::get_cursor_install_from_base_path(&base_path);
+
+    let patched = do_check_ext_host_patched(&install_path);
+
+    if patched {
+        // 补丁还在 → 重置 missing 标记，啥都不用做
+        AUTO_REPATCH_LAST_MISSING.store(false, Ordering::SeqCst);
+        return;
+    }
+
+    // 补丁缺失 → 如果上次 tick 也是缺失，说明用户还没处理，跳过本次 emit 避免连续轰炸
+    let prev_missing = AUTO_REPATCH_LAST_MISSING.swap(true, Ordering::SeqCst);
+    if prev_missing {
+        return;
+    }
+
+    // 首次发现缺失 → 取 Cursor 版本号一起带过去，前端模态可以展示
+    let cursor_version = paths.version.clone().unwrap_or_default();
+    let _ = app.emit_all(
+        "patch-missing-alert",
+        serde_json::json!({
+            "version": cursor_version,
+        }),
+    );
+}
+
+/// 启动自动重补监控（幂等：已运行则 no-op）
+fn start_auto_repatch_monitor(app: AppHandle) {
+    AUTO_REPATCH_LAST_MISSING.store(false, Ordering::SeqCst);
+    let was_enabled = AUTO_REPATCH_ENABLED.swap(true, Ordering::SeqCst);
+    if !was_enabled {
+        tokio::spawn(async move {
+            auto_repatch_loop(app).await;
+        });
+    }
+}
+
+/// 停止自动重补监控
+fn stop_auto_repatch_monitor() {
+    AUTO_REPATCH_ENABLED.store(false, Ordering::SeqCst);
+    AUTO_REPATCH_LAST_MISSING.store(false, Ordering::SeqCst);
 }
 
 #[tauri::command]

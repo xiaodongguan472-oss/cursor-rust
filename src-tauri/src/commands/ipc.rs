@@ -210,16 +210,16 @@ pub async fn xb2(enabled: bool) -> serde_json::Value {
 
 // === Seamless switch ===
 #[tauri::command]
-pub async fn xc1() -> serde_json::Value {
-    seamless_switch::patch_ext_host().await
+pub async fn xc1(app: tauri::AppHandle) -> serde_json::Value {
+    seamless_switch::patch_ext_host(app).await
 }
 #[tauri::command]
 pub async fn xc2() -> serde_json::Value {
     seamless_switch::unpatch_ext_host().await
 }
 #[tauri::command]
-pub async fn xc3() -> bool {
-    seamless_switch::check_ext_host_patched().await
+pub async fn xc3(app: tauri::AppHandle) -> bool {
+    seamless_switch::check_ext_host_patched(app).await
 }
 #[tauri::command]
 pub async fn xc4(token: String) -> bool {
