@@ -51,6 +51,7 @@ fn main() {
             ipc::xd1, ipc::xd2,
             ipc::xe1,
             ipc::xf1, ipc::xf2, ipc::xf3,
+            ipc::xg1, ipc::xg2, ipc::xg3, ipc::xg4, ipc::xg5,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

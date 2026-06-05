@@ -82,6 +82,152 @@ impl FullMachineIds {
     }
 }
 
+/// 不重启 Cursor 生效的关键：抓取当前 storage.json 里的「旧」ID 值。
+/// 这些是 Cursor 进程启动时已经缓存到内存的值，我们要在 ExtHost 拦截层把它们
+/// 替换成新值。
+fn read_old_ids_from_storage() -> Vec<String> {
+    let mut old: Vec<String> = Vec::new();
+    let storage_path = match utils::get_cursor_storage_json_path() {
+        Some(p) => p,
+        None => return old,
+    };
+    if !storage_path.exists() {
+        return old;
+    }
+    let content = match fs::read_to_string(&storage_path) {
+        Ok(s) => s,
+        Err(_) => return old,
+    };
+    let json: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return old,
+    };
+    let obj = match json.as_object() {
+        Some(o) => o,
+        None => return old,
+    };
+
+    // 5 个核心 telemetry 字段 + 2 个补充 SQM 字段
+    let candidate_keys = [
+        utils::keys::telem_machine(),
+        utils::keys::telem_mac(),
+        utils::keys::telem_dev(),
+        utils::keys::telem_sqm(),
+        utils::keys::telem_machine_guid(),
+        utils::keys::telem_sqm_client(),
+        utils::keys::storage_service_machine(),
+    ];
+    for k in candidate_keys.iter() {
+        if let Some(v) = obj.get(k).and_then(|x| x.as_str()) {
+            // 8 是经验值：太短的字符串（< 8 字符）替换风险大（误伤）
+            // UUID = 36 / SHA256 = 64 / SHA512 = 128 / {UUID大写} = 38 都远大于 8
+            if v.len() >= 8 {
+                old.push(v.to_string());
+            }
+        }
+    }
+    // 去重 —— SQM 和 dev_id 在某些情况是同一个值
+    old.sort();
+    old.dedup();
+    old
+}
+
+/// 写入 ExtHost 用的 machine ID 覆盖映射文件（**累积式**）。
+/// 文件位置：`~/.cursor-renewal/machine_id_override`
+/// 格式：JSON `{"mappings": [{"old": "...", "new": "..."}, ...]}`
+///
+/// **关键设计：累积保留所有历史 old → 重定向到最新 new**
+/// 原因：Cursor 进程启动时把 machineId/macMachineId 等缓存到 V8 内存里，之后即使我们
+/// 改了 storage.json，Cursor 发出去的 x-cursor-checksum 还是用"启动时缓存的旧 ID"
+/// 拼接的。如果我们只记录"上一次重置时 storage.json 里的值"作为 old，那么第二次重置
+/// 之后 mapping 里的 old 已经不是 Cursor 内存里的真正旧 ID 了 → 替换失效。
+///
+/// 解决方案：
+///   1. 读取已存在的 override 文件（含所有历史 old）
+///   2. 把每条历史 mapping 的 new 重定向成"当前 new"（这样无论 Cursor 内存里的旧 ID 是
+///      初代/二代/三代，最终都映射到当前新值）
+///   3. 加入"上一次 storage.json 的值"作为新一条 mapping
+///   4. 写回文件
+fn write_machine_id_override_for_exthost(old_ids: &[String], new_ids: &FullMachineIds) {
+    let new_values: Vec<String> = {
+        let mut v = vec![
+            new_ids.machine_id.clone(),
+            new_ids.mac_machine_id.clone(),
+            new_ids.dev_device_id.clone(),
+            new_ids.sqm_id.clone(),
+            new_ids.machine_guid.clone(),
+            new_ids.sqm_client_id.clone(),
+            new_ids.service_machine_id.clone(),
+        ];
+        v.sort();
+        v.dedup();
+        v
+    };
+
+    let dir = dirs::home_dir().unwrap_or_default().join(".cursor-renewal");
+    let _ = fs::create_dir_all(&dir);
+    let override_path = dir.join("machine_id_override");
+
+    // 1. 读已存在的 mapping
+    let mut all_olds: Vec<String> = Vec::new();
+    if let Ok(prev) = fs::read_to_string(&override_path) {
+        if let Ok(prev_json) = serde_json::from_str::<serde_json::Value>(&prev) {
+            if let Some(arr) = prev_json.get("mappings").and_then(|v| v.as_array()) {
+                for m in arr {
+                    if let Some(o) = m.get("old").and_then(|v| v.as_str()) {
+                        all_olds.push(o.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. 把这次抓的 storage.json 旧值加入历史集（这些是"上一次重置后的状态"）
+    for o in old_ids {
+        all_olds.push(o.clone());
+    }
+
+    // 3. 排除任何与「当前 new」相等的 old —— 防止把新值替换成自己（无意义且浪费 CPU）
+    let new_set: std::collections::HashSet<&String> = new_values.iter().collect();
+    all_olds.retain(|o| !new_set.contains(o));
+
+    // 4. 去重
+    all_olds.sort();
+    all_olds.dedup();
+
+    // 5. 构造 mapping —— 每条历史 old 都重定向到「等长的当前 new」
+    let mut mappings: Vec<serde_json::Value> = Vec::new();
+    for o in &all_olds {
+        let candidate = new_values.iter().find(|n| n.len() == o.len());
+        if let Some(n) = candidate {
+            mappings.push(serde_json::json!({"old": o, "new": n}));
+        }
+    }
+
+    let payload = serde_json::json!({ "mappings": mappings });
+    let serialized = serde_json::to_string(&payload).unwrap_or_else(|_| "{\"mappings\":[]}".into());
+    match fs::write(&override_path, &serialized) {
+        Ok(()) => {
+            crate::ulog!(
+                "[Reset] override file written: {} bytes, {} cumulative mapping(s) (includes history), path = {}",
+                serialized.len(), mappings.len(), override_path.display()
+            );
+        }
+        Err(e) => {
+            crate::ulog!("[Reset] ✗ override file write FAILED: {}", e);
+        }
+    }
+}
+
+/// 清除 ExtHost 覆盖映射 —— 用户关闭「激活无感换号」时调用。
+pub fn clear_machine_id_override() {
+    let path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".cursor-renewal")
+        .join("machine_id_override");
+    let _ = fs::remove_file(path);
+}
+
 #[cfg(target_os = "windows")]
 fn set_file_readonly(path: &Path, readonly: bool) -> Result<(), String> {
     let mut permissions = fs::metadata(path)
@@ -360,6 +506,21 @@ pub fn perform_full_machine_id_reset() -> ResetResult {
     let ids = FullMachineIds::generate();
     let mut details: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
+
+    crate::ulog!("[Reset] === START === dev={}, machine={}",
+        &ids.dev_device_id[..8.min(ids.dev_device_id.len())],
+        &ids.machine_id[..8.min(ids.machine_id.len())]);
+
+    // === 步骤 0: 抓取「旧 ID」—— 用于「不重启 Cursor 立即生效」的 ExtHost 拦截层
+    // Cursor 在启动时把 machine ID 缓存到 V8 模块作用域，之后内存里一直用旧值。
+    // 我们没法强制 Cursor 重新读 disk，但可以在 ExtHost 补丁里：
+    //   - 拦截所有发往 cursor.sh / cursor.com 的请求
+    //   - 在 header / body 里把「旧 ID 字符串」替换成「新 ID 字符串」
+    // 这样后端看到的全是新 ID，等于 Cursor 已经"换机器"了，无需重启。
+    let old_ids = read_old_ids_from_storage();
+    crate::ulog!("[Reset] step 0: captured {} old id(s) from storage.json", old_ids.len());
+    write_machine_id_override_for_exthost(&old_ids, &ids);
+    details.push("[步骤0] 已写 ExtHost machine ID 覆盖映射（无需重启 Cursor 即生效）".to_string());
 
     details.push(format!("[步骤1] 生成新 Machine ID: dev={}, machine={}...",
         &ids.dev_device_id[..8.min(ids.dev_device_id.len())],

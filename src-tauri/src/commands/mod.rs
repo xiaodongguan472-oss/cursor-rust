@@ -12,6 +12,7 @@ pub mod model;
 pub mod proxy;
 pub mod seamless_switch;
 pub mod unlock_mitm;
+pub mod log_buffer;
 pub mod workspace;
 pub mod window_ctrl;
 pub mod utils;

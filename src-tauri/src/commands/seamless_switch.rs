@@ -20,6 +20,17 @@ const AUTO_REPATCH_INTERVAL_SECS: u64 = 67;
 
 const EH_PATCH_START: &str = "/* MOCURSO_EH_PATCH_START */";
 const EH_PATCH_END: &str = "/* MOCURSO_EH_PATCH_END */";
+/// 补丁版本号 —— 每次改 build_eh_inject_code 都要 +1。
+/// do_patch_ext_host 检测到旧版本会自动卸载重装。
+/// v2：加 machine ID 覆盖映射（仅 JSON body）
+/// v3：扩展到 Buffer 字节级查找替换，覆盖 protobuf / gRPC 二进制 body
+/// v4：诊断模式 —— dump 未匹配的候选 ID
+/// v5：累积式 mapping（机器人启动时缓存的 ID 永远能被替换）+ header 替换 log
+///     —— 关键修复：x-cursor-checksum = `00000000${machineId}/${macMachineId}`
+///     从 Cursor 启动时的内存值拼接；我们重置 storage.json 不影响内存里的"原始旧 ID"。
+///     mapping 改为累积式后，无论 Cursor 内存里是 1 代/2 代/N 代前的旧 ID，都能映射到当前新值。
+const EH_PATCH_VERSION: u32 = 5;
+const EH_PATCH_VERSION_MARKER: &str = "MOCURSO_EH_PATCH_V";
 const CURSOR_API: &str = "https://api2.cursor.sh";
 const CURSOR_WEB: &str = "https://cursor.com";
 const CURSOR_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/0.50.5 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36";
@@ -66,28 +77,76 @@ fn build_eh_inject_code() -> String {
     let token_file = get_active_token_file();
     let token_path = token_file.to_string_lossy().replace('\\', "/");
 
+    // 同目录下的 machine_id_override 文件 —— 由 machine_id::perform_full_machine_id_reset 写入
+    // 内容：{"mappings": [{"old": "...", "new": "..."}, ...]}
+    let override_file = get_data_dir().join("machine_id_override");
+    let override_path = override_file.to_string_lossy().replace('\\', "/");
+
+    // ExtHost 自检日志 —— 补丁里每次成功替换会 append 一行到这里，
+    // 用户在 UI 的「查看日志」里能看到。证明补丁活着 + 映射在生效。
+    let exthost_log_file = get_data_dir().join("exthost.log");
+    let exthost_log_path = exthost_log_file.to_string_lossy().replace('\\', "/");
+
+    let version_marker = format!("/* {}{} */", EH_PATCH_VERSION_MARKER, EH_PATCH_VERSION);
+
     format!(
         "{start}\n\
+{vmark}\n\
 const _mcM=await import('node:module');\n\
 const _mcR=_mcM.createRequire(import.meta.url);\n\
 const _mcF=_mcR('fs');\n\
 const _mcTF='{token}';\n\
+const _mcOF='{override}';\n\
+const _mcLF='{exthost_log}';\n\
 let _mcTk=null,_mcLt=0;\n\
+let _mcMap=null,_mcMlt=0;\n\
+function _mcLG(msg){{try{{_mcF.appendFileSync(_mcLF,'['+new Date().toISOString()+'] '+msg+'\\n');}}catch(e){{}}}}\n\
+try{{_mcLG('exthost patch v{ver} loaded; override file = '+_mcOF);}}catch(e){{}}\n\
 function _mcGT(){{const n=Date.now();if(n-_mcLt>500){{_mcLt=n;try{{_mcTk=_mcF.readFileSync(_mcTF,'utf8').trim()||null;}}catch(e){{_mcTk=null;}}}}return _mcTk;}}\n\
-try{{const _h2=_mcR('http2');const _oC=_h2.connect;_h2.connect=function(a,...r){{const s=_oC.call(_h2,a,...r);if(typeof a==='string'&&(a.includes('cursor.sh')||a.includes('cursor.com'))){{const _oR=s.request.bind(s);s.request=function(h,...ra){{const t=_mcGT();if(t&&h)h['authorization']='Bearer '+t;return _oR(h,...ra);}};}}return s;}};}}catch(e){{}}\n\
-try{{const _hs=_mcR('https');const _oR=_hs.request;_hs.request=function(o,...ra){{if(o&&typeof o==='object'&&o.hostname&&(o.hostname.includes('cursor.sh')||o.hostname.includes('cursor.com'))){{const t=_mcGT();if(t&&o.headers)o.headers['authorization']='Bearer '+t;}}return _oR.call(_hs,o,...ra);}};}}catch(e){{}}\n\
-try{{if(typeof globalThis.fetch==='function'&&!globalThis._mcOF){{globalThis._mcOF=globalThis.fetch;globalThis.fetch=function(i,init){{const t=_mcGT();if(t){{let u=typeof i==='string'?i:(i instanceof URL?i.href:i?.url||'');if(u.includes('cursor.sh')||u.includes('cursor.com')){{init=init||{{}};init.headers=init.headers||{{}};if(typeof init.headers.set==='function')init.headers.set('authorization','Bearer '+t);else init.headers['authorization']='Bearer '+t;}}}}return globalThis._mcOF(i,init);}};}}}}catch(e){{}}\n\
+function _mcGM(){{const n=Date.now();if(n-_mcMlt>500){{_mcMlt=n;try{{const r=JSON.parse(_mcF.readFileSync(_mcOF,'utf8'));_mcMap=Array.isArray(r&&r.mappings)?r.mappings.filter(m=>m&&typeof m.old==='string'&&typeof m.new==='string'&&m.old.length>=8):[];}}catch(e){{_mcMap=[];}}}}return _mcMap||[];}}\n\
+function _mcSR(s){{if(typeof s!=='string')return s;const map=_mcGM();if(!map.length)return s;let out=s,hit=0;for(const m of map){{if(out.indexOf(m.old)!==-1){{out=out.split(m.old).join(m.new);hit++;}}}}return out;}}\n\
+function _mcPH(h){{if(!h||typeof h!=='object')return;try{{let replaced=0,checksumBefore=null,checksumAfter=null;for(const k of Object.keys(h)){{const v=h[k];if(typeof v==='string'){{const nv=_mcSR(v);if(nv!==v){{h[k]=nv;replaced++;if(k.toLowerCase()==='x-cursor-checksum'){{checksumBefore=v.length;checksumAfter=nv.length;}}}}}}else if(Array.isArray(v)){{const nva=v.map(x=>typeof x==='string'?_mcSR(x):x);if(JSON.stringify(nva)!==JSON.stringify(v)){{h[k]=nva;replaced++;}}}}}}if(replaced>0){{try{{_mcLG('header REPLACED '+replaced+' value(s)'+(checksumBefore?' [x-cursor-checksum updated, len '+checksumBefore+'->'+checksumAfter+']':''));}}catch(e){{}}}}}}catch(e){{}}}}\n\
+function _mcBR(buf){{const map=_mcGM();if(!buf||buf.length<8)return buf;let out=buf,replacedTotal=0;if(map.length){{for(const m of map){{if(m.old.length!==m.new.length)continue;const oldB=Buffer.from(m.old,'utf8');const newB=Buffer.from(m.new,'utf8');if(oldB.length!==newB.length)continue;let idx=0,localCount=0,working=null;while(true){{const found=out.indexOf(oldB,idx);if(found===-1)break;if(working===null)working=Buffer.from(out);newB.copy(working,found);idx=found+oldB.length;localCount++;}}if(localCount>0){{out=working;replacedTotal+=localCount;}}}}}}if(replacedTotal>0){{try{{_mcLG('replaced '+replacedTotal+' id occurrence(s) in buffer size='+buf.length);}}catch(e){{}}}}else if(buf.length>=16&&buf.length<8192){{try{{const ascii=buf.toString('latin1');const uuidR=/[0-9a-fA-F]{{8}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{12}}/g;const shaR=/[0-9a-fA-F]{{64}}|[0-9a-fA-F]{{128}}/g;const cands=new Set();let mm;while((mm=uuidR.exec(ascii))!==null){{cands.add(mm[0]);if(cands.size>=10)break;}}while((mm=shaR.exec(ascii))!==null){{cands.add(mm[0]);if(cands.size>=10)break;}}if(cands.size>0){{const list=[...cands].slice(0,8).join('|');_mcLG('DIAG: buffer size='+buf.length+' has '+cands.size+' candidate id(s) NOT in mapping: '+list);}}}}catch(e){{}}}}return out;}}\n\
+function _mcPB(b){{if(b==null)return b;try{{if(typeof b==='string'){{const t=b.trim();if(t.startsWith('{{')||t.startsWith('[')){{try{{const o=JSON.parse(b);return _mcSR(JSON.stringify(o));}}catch(e){{}}}}return _mcSR(b);}}if(Buffer.isBuffer(b)){{return _mcBR(b);}}if(b instanceof Uint8Array){{return _mcBR(Buffer.from(b.buffer,b.byteOffset,b.byteLength));}}if(b&&b.buffer instanceof ArrayBuffer&&typeof b.byteLength==='number'){{return _mcBR(Buffer.from(b.buffer,b.byteOffset||0,b.byteLength));}}}}catch(e){{}}return b;}}\n\
+try{{const _h2=_mcR('http2');const _oC=_h2.connect;_h2.connect=function(a,...r){{const s=_oC.call(_h2,a,...r);if(typeof a==='string'&&(a.includes('cursor.sh')||a.includes('cursor.com'))){{try{{_mcLG('http2 connect to '+a);}}catch(e){{}}const _oR=s.request.bind(s);s.request=function(h,...ra){{const t=_mcGT();if(t&&h)h['authorization']='Bearer '+t;_mcPH(h);const _rs=_oR(h,...ra);try{{const _ow=_rs.write?_rs.write.bind(_rs):null;if(_ow){{_rs.write=function(c,...rr){{return _ow(_mcPB(c),...rr);}};}}const _oe=_rs.end?_rs.end.bind(_rs):null;if(_oe){{_rs.end=function(c,...rr){{if(c==null)return _oe(...rr);return _oe(_mcPB(c),...rr);}};}}}}catch(e){{}}return _rs;}};}}return s;}};}}catch(e){{}}\n\
+try{{const _hs=_mcR('https');const _oR=_hs.request;_hs.request=function(o,...ra){{const ish=o&&typeof o==='object'&&o.hostname&&(o.hostname.includes('cursor.sh')||o.hostname.includes('cursor.com'));if(ish){{try{{_mcLG('https request to '+o.hostname+(o.path||''));}}catch(e){{}}const t=_mcGT();if(t&&o.headers)o.headers['authorization']='Bearer '+t;_mcPH(o&&o.headers);}}const _rq=_oR.call(_hs,o,...ra);if(ish){{try{{const _ow=_rq.write?_rq.write.bind(_rq):null;if(_ow){{_rq.write=function(c,...rr){{return _ow(_mcPB(c),...rr);}};}}const _oe=_rq.end?_rq.end.bind(_rq):null;if(_oe){{_rq.end=function(c,...rr){{if(c==null)return _oe(...rr);return _oe(_mcPB(c),...rr);}};}}}}catch(e){{}}}}return _rq;}};}}catch(e){{}}\n\
+try{{if(typeof globalThis.fetch==='function'&&!globalThis._mcOF2){{globalThis._mcOF2=globalThis.fetch;globalThis.fetch=function(i,init){{const t=_mcGT();let u=typeof i==='string'?i:(i instanceof URL?i.href:i?.url||'');const ish=u&&(u.includes('cursor.sh')||u.includes('cursor.com'));if(ish){{try{{_mcLG('fetch to '+u);}}catch(e){{}}init=init||{{}};init.headers=init.headers||{{}};if(t){{if(typeof init.headers.set==='function')init.headers.set('authorization','Bearer '+t);else init.headers['authorization']='Bearer '+t;}}try{{if(init.headers&&typeof init.headers==='object'&&typeof init.headers.set!=='function'){{_mcPH(init.headers);}}else if(init.headers&&typeof init.headers.forEach==='function'){{const ks=[];init.headers.forEach((v,k)=>ks.push([k,v]));for(const [k,v] of ks){{if(typeof v==='string'){{const nv=_mcSR(v);if(nv!==v)init.headers.set(k,nv);}}}}}}if(init.body!=null){{init.body=_mcPB(init.body);}}}}catch(e){{}}}}return globalThis._mcOF2(i,init);}};}}}}catch(e){{}}\n\
 {end}\n",
         start = EH_PATCH_START,
         end = EH_PATCH_END,
+        vmark = version_marker,
+        ver = EH_PATCH_VERSION,
         token = token_path,
+        override = override_path,
+        exthost_log = exthost_log_path,
     )
+}
+
+/// 把文件里 EH_PATCH_START..EH_PATCH_END 区间删掉（含两端标记），返回剩余内容。
+/// 找不到标记就原样返回。用于补丁版本升级前先剥旧的。
+fn strip_old_patch_block(content: &str) -> String {
+    if let (Some(start_idx), Some(end_idx)) = (
+        content.find(EH_PATCH_START),
+        content.find(EH_PATCH_END),
+    ) {
+        let end_with_marker = end_idx + EH_PATCH_END.len();
+        let mut out = String::with_capacity(content.len());
+        out.push_str(&content[..start_idx]);
+        if end_with_marker < content.len() {
+            out.push_str(&content[end_with_marker..]);
+        }
+        out.trim_start().to_string()
+    } else {
+        content.to_string()
+    }
 }
 
 fn do_patch_ext_host(cursor_install_path: &Path) -> serde_json::Value {
     let eh_path = get_ext_host_js_path(cursor_install_path);
+    crate::ulog!("[ExtHost] patch start, target = {}", eh_path.display());
 
     if !eh_path.exists() {
+        crate::ulog!("[ExtHost] ✗ file not found");
         return serde_json::json!({
             "success": false, "patched": false,
             "error": format!("extensionHostProcess.js not found: {}", eh_path.display())
@@ -97,6 +156,7 @@ fn do_patch_ext_host(cursor_install_path: &Path) -> serde_json::Value {
     let content = match fs::read_to_string(&eh_path) {
         Ok(c) => c,
         Err(e) => {
+            crate::ulog!("[ExtHost] ✗ read failed: {}", e);
             return serde_json::json!({
                 "success": false, "patched": false,
                 "error": format!("读取文件失败: {}", e)
@@ -104,19 +164,45 @@ fn do_patch_ext_host(cursor_install_path: &Path) -> serde_json::Value {
         }
     };
 
-    // Already patched?
+    // 已经打过补丁了 —— 检查版本号是不是最新的
+    let current_version_marker = format!("{}{}", EH_PATCH_VERSION_MARKER, EH_PATCH_VERSION);
     if content.contains(EH_PATCH_START) {
-        return serde_json::json!({"success": true, "patched": true, "message": "已经注入过补丁"});
+        if content.contains(&current_version_marker) {
+            crate::ulog!("[ExtHost] already patched at version {} (skip)", EH_PATCH_VERSION);
+            return serde_json::json!({"success": true, "patched": true, "message": "已经注入过补丁"});
+        }
+        // 旧版本补丁 → 先剥掉，再下面正常路径重新注入新版本
+        crate::ulog!("[ExtHost] old version detected, stripping...");
+        let stripped = strip_old_patch_block(&content);
+        let write_result = utils::safe_modify_file(&eh_path, || {
+            fs::write(&eh_path, &stripped).map_err(|e| format!("剥旧补丁失败: {}", e))
+        });
+        if let Err(e) = write_result {
+            crate::ulog!("[ExtHost] ✗ strip failed: {}", e);
+            return serde_json::json!({"success": false, "patched": false, "error": e});
+        }
+        // 落到下面重新注入
     }
 
-    // Create backup
+    // Create backup（旧补丁剥掉之后 content 已变，重新读一份）
     let backup = format!("{}.bak", eh_path.to_string_lossy());
     if !Path::new(&backup).exists() {
         let _ = fs::copy(&eh_path, &backup);
     }
 
+    let current = match fs::read_to_string(&eh_path) {
+        Ok(c) => c,
+        Err(e) => {
+            crate::ulog!("[ExtHost] ✗ re-read after strip failed: {}", e);
+            return serde_json::json!({
+                "success": false, "patched": false,
+                "error": format!("剥旧补丁后再读失败: {}", e)
+            });
+        }
+    };
+
     let inject_code = build_eh_inject_code();
-    let new_content = format!("{}{}", inject_code, content);
+    let new_content = format!("{}{}", inject_code, current);
 
     let write_result = utils::safe_modify_file(&eh_path, || {
         fs::write(&eh_path, &new_content).map_err(|e| format!("写入文件失败: {}", e))
@@ -124,6 +210,7 @@ fn do_patch_ext_host(cursor_install_path: &Path) -> serde_json::Value {
 
     match write_result {
         Ok(()) => {
+            crate::ulog!("[ExtHost] ✓ injected v{}, size = {} bytes", EH_PATCH_VERSION, new_content.len());
             // macOS: 清除扩展属性（避免 Gatekeeper 拦截）+ ad-hoc 重签
             #[cfg(target_os = "macos")]
             {
@@ -547,6 +634,9 @@ pub async fn unpatch_ext_host() -> serde_json::Value {
     };
     let install_path = cursor_paths::get_cursor_install_from_base_path(&base_path);
     let unpatch_result = do_unpatch_ext_host(&install_path);
+
+    // 清掉 machine ID 覆盖映射 —— 补丁已经移除，文件不再有意义
+    machine_id::clear_machine_id_override();
 
     // === 模型解锁后置步骤：关闭 MITM、清环境变量 / settings.json / 删 CA ===
     // 用户关闭「激活无感换号」时彻底回退：证书 + 环境变量 + 代理键都清掉。

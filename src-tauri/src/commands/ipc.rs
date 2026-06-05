@@ -287,3 +287,25 @@ pub async fn xf2(window: tauri::Window) {
 pub async fn xf3(window: tauri::Window) {
     window_ctrl::show_main_window(window).await
 }
+
+// === Log buffer / diagnostics ===
+#[tauri::command]
+pub async fn xg1() -> Vec<String> {
+    log_buffer::get_log_entries().await
+}
+#[tauri::command]
+pub async fn xg2() -> String {
+    log_buffer::read_log_file().await
+}
+#[tauri::command]
+pub async fn xg3() -> bool {
+    log_buffer::clear_log_file().await
+}
+#[tauri::command]
+pub async fn xg4() -> Result<(), String> {
+    log_buffer::open_log_folder().await
+}
+#[tauri::command]
+pub async fn xg5() -> String {
+    log_buffer::read_exthost_log().await
+}
