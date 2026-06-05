@@ -5988,45 +5988,6 @@
       </div>
     </div>
 
-    <!-- Cursor 正在运行 → 重置机器码失败的提示模态 -->
-    <div v-if="showCursorRunningModal" class="dialog-overlay" @click.self="showCursorRunningModal = false">
-      <div style="background: #fff; border-radius: 20px; width: 460px; max-width: 92vw; box-shadow: 0 25px 60px rgba(0,0,0,0.3); overflow: hidden; animation: dialogSlideIn 0.3s ease-out;">
-        <!-- 顶部装饰：红色警示渐变 -->
-        <div style="padding: 26px 28px 22px; text-align: center; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white;">
-          <div style="width: 58px; height: 58px; margin: 0 auto 14px; background: rgba(255,255,255,0.22); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 30px; backdrop-filter: blur(8px);">🚫</div>
-          <div style="font-size: 19px; font-weight: 700; letter-spacing: 0.5px;">无法重置机器码</div>
-          <div style="font-size: 13px; opacity: 0.92; margin-top: 8px; line-height: 1.5;">
-            Cursor 正在运行中<br>
-            相关文件被独占，<span style="font-weight: 700;">必须先关闭 Cursor</span>
-          </div>
-        </div>
-        <!-- 内容 -->
-        <div style="padding: 22px 28px 8px;">
-          <div style="display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); border-radius: 12px; border-left: 4px solid #ef4444; margin-bottom: 10px;">
-            <div style="flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: #ef4444; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;">1</div>
-            <div style="flex: 1; font-size: 14.5px; color: #1e293b; line-height: 1.55;">
-              彻底关闭 Cursor 主窗口、托盘图标、所有后台进程
-            </div>
-          </div>
-          <div style="display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%); border-radius: 12px; border-left: 4px solid #6366f1; margin-bottom: 4px;">
-            <div style="flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: #6366f1; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;">2</div>
-            <div style="flex: 1; font-size: 14.5px; color: #1e293b; line-height: 1.55;">
-              再点击 <span style="color: #6366f1; font-weight: 700; white-space: nowrap;">「重置机器码」</span> 按钮重试
-            </div>
-          </div>
-        </div>
-        <!-- 按钮 -->
-        <div style="padding: 18px 28px 24px;">
-          <button @click="showCursorRunningModal = false"
-            style="width: 100%; padding: 13px 24px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 14px rgba(239,68,68,0.32); transition: all 0.2s;"
-            onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 6px 20px rgba(239,68,68,0.45)';"
-            onmouseout="this.style.transform=''; this.style.boxShadow='0 4px 14px rgba(239,68,68,0.32)';">
-            我知道了
-          </button>
-        </div>
-      </div>
-    </div>
-
     <!-- Cursor初始化提示框 -->
 
     <div v-if="showCursorInitAlert" class="cursor-init-alert-overlay">
@@ -6691,9 +6652,6 @@
 
             // 重置机器码：操作前确认模态
             showResetMachineIdsModal: false,
-
-            // 重置机器码：检测到 Cursor 运行 → 提示用户先关闭
-            showCursorRunningModal: false,
 
             // Cursor未初始化提示框
 
@@ -11220,10 +11178,7 @@
               } else {
 
                 const errorMsg = result?.error || '未知错误';
-                // 后端检测到 Cursor 正在运行 → 弹模态让用户先关闭 Cursor
-                if (errorMsg === 'CURSOR_RUNNING') {
-                  this.showCursorRunningModal = true;
-                } else if (this.isMacPermissionError(errorMsg)) {
+                if (this.isMacPermissionError(errorMsg)) {
                   this.showMacPermissionTip();
                 } else {
                   ElMessage.error('重置机器码失败: ' + errorMsg);
@@ -11410,7 +11365,17 @@
 
               const result = await ipcRenderer.invoke('xca', dbPath, this.cardCode);
 
-
+              // 把机器码重置每一步的详细日志打到 console —— 方便 macOS / Windows 用户都能验证
+              // 「无感换号确实先重置了机器码」（步骤 1: 生成 ID / 步骤 2: storage.json / 步骤 3:
+              // state.vscdb / 步骤 4: machineId 文件 / 步骤 5: 散落文件 / 步骤 6: 注册表 / 步骤 7: main.js）
+              if (result && result.machineIdResetDetails) {
+                const d = result.machineIdResetDetails;
+                console.log('[一键换号 - 机器码重置详情]');
+                console.log('  换号前重置:', d.preReset?.success ? '✓ 成功' : '✗ 失败');
+                (d.preReset?.steps || []).forEach(s => console.log('    ' + s));
+                console.log('  换号后重置:', d.postReset?.success ? '✓ 成功' : '✗ 失败');
+                (d.postReset?.steps || []).forEach(s => console.log('    ' + s));
+              }
 
               if (result && result.success) {
 

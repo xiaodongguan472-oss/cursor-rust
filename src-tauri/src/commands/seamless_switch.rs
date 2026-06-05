@@ -611,14 +611,14 @@ pub async fn seamless_switch_cmd(
     refresh_token: String,
 ) -> serde_json::Value {
     // 1. 先重置机器码（换号前）
-    let _ = machine_id::perform_full_machine_id_reset_force();
+    let _ = machine_id::perform_full_machine_id_reset();
 
     // 2. 执行换号
     let result = do_seamless_switch(&db_path, &email, &access_token, &refresh_token).await;
 
     // 3. 换号成功后再次重置机器码（确保新账号使用新机器码）
     if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-        let _ = machine_id::perform_full_machine_id_reset_force();
+        let _ = machine_id::perform_full_machine_id_reset();
     }
 
     result
@@ -671,10 +671,10 @@ pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json:
         return serde_json::json!({"success": false, "error": "后端返回的账号信息不完整"});
     }
 
-    // 3. 先重置机器码（换号前）——「_force」绕过 Cursor-running 检查；
-    //    捕获结果是为了把状态带回前端做反馈
-    let pre_reset = machine_id::perform_full_machine_id_reset_force();
+    // 3. 先重置机器码（换号前）—— 捕获结果是为了把状态带回前端做反馈
+    let pre_reset = machine_id::perform_full_machine_id_reset();
     let pre_reset_ok = pre_reset.success;
+    let pre_details = pre_reset.details.clone();
 
     // 4. Execute seamless switch
     let switch_result = do_seamless_switch(&db_path, email, token, token).await;
@@ -684,10 +684,11 @@ pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json:
         .unwrap_or(false);
 
     // 5. 换号成功后再次重置机器码（确保新账号使用新机器码）
-    let post_reset_ok = if switch_ok {
-        machine_id::perform_full_machine_id_reset_force().success
+    let (post_reset_ok, post_details) = if switch_ok {
+        let post = machine_id::perform_full_machine_id_reset();
+        (post.success, post.details.clone())
     } else {
-        false
+        (false, Vec::new())
     };
 
     let mut result = switch_result;
@@ -697,6 +698,15 @@ pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json:
         obj.insert(
             "machineIdReset".to_string(),
             serde_json::json!(pre_reset_ok || post_reset_ok),
+        );
+        // 把每一步执行细节也带回前端 —— 方便用户在 DevTools console 验证机器码确实重置了
+        // 包括 macOS 路径上的 storage.json / state.vscdb / machineId 文件 / main.js 修补
+        obj.insert(
+            "machineIdResetDetails".to_string(),
+            serde_json::json!({
+                "preReset": { "success": pre_reset_ok, "steps": pre_details },
+                "postReset": { "success": post_reset_ok, "steps": post_details }
+            }),
         );
     }
     result
@@ -788,13 +798,22 @@ async fn usage_monitor_poll(app: &AppHandle) {
         return;
     }
 
-    // 触发换号
-    AUTO_SWITCH_BUSY.store(true, Ordering::SeqCst);
+    // 触发换号 —— 原子声明 BUSY（防止双 loop 同时进入），并用 RAII 守卫保证
+    // **不管哪条路径退出（正常 / 早返回 / panic）BUSY 都自动复位**。
+    // 之前的 `BUSY.store(false)` 散落在 4 处，任意一处遗漏或 panic 都会让 BUSY 永远卡 true。
+    if AUTO_SWITCH_BUSY
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        // 另一个 loop 已经在跑了，让出
+        return;
+    }
+    let _busy_guard = BusyGuard;
 
     let card_code = match AUTO_SWITCH_CARD_CODE.lock().ok().and_then(|g| g.clone()) {
         Some(c) => c,
         None => {
-            AUTO_SWITCH_BUSY.store(false, Ordering::SeqCst);
+            // BusyGuard drop 会复位 BUSY，无需手动
             return;
         }
     };
@@ -826,13 +845,13 @@ async fn usage_monitor_poll(app: &AppHandle) {
                     "error": e
                 }),
             );
-            AUTO_SWITCH_BUSY.store(false, Ordering::SeqCst);
+            // BusyGuard drop 会复位 BUSY
             return;
         }
     };
 
     // 2. 先重置机器码（换号前）
-    let _ = machine_id::perform_full_machine_id_reset_force();
+    let _ = machine_id::perform_full_machine_id_reset();
 
     // 3. 执行无感换号
     let db_path = utils::get_cursor_db_path()
@@ -846,7 +865,7 @@ async fn usage_monitor_poll(app: &AppHandle) {
 
     // 4. 换号成功后再次重置机器码（确保新账号使用新机器码）
     if switch_ok {
-        let _ = machine_id::perform_full_machine_id_reset_force();
+        let _ = machine_id::perform_full_machine_id_reset();
     }
 
     let _ = app.emit_all(
@@ -862,8 +881,17 @@ async fn usage_monitor_poll(app: &AppHandle) {
             }
         }),
     );
+    // _busy_guard drop → BUSY = false
+}
 
-    AUTO_SWITCH_BUSY.store(false, Ordering::SeqCst);
+/// BUSY 标志的 RAII 守卫：实例 drop 时（包括 panic 退栈时）自动复位 BUSY 到 false。
+/// 这是「自动换号开了就永不失效」的最后一道保险 —— 哪怕换号流程里的某行代码出现意外
+/// panic / 提前 return，BUSY 也不会永远卡在 true。
+struct BusyGuard;
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        AUTO_SWITCH_BUSY.store(false, Ordering::SeqCst);
+    }
 }
 
 async fn usage_monitor_loop(app: AppHandle) {
@@ -872,7 +900,16 @@ async fn usage_monitor_loop(app: AppHandle) {
 
     while AUTO_SWITCH_ENABLED.load(Ordering::SeqCst) {
         if !AUTO_SWITCH_BUSY.load(Ordering::SeqCst) {
-            usage_monitor_poll(&app).await;
+            // 把 poll 放到独立子任务跑：
+            // - 即使 poll 因为某行罕见的 panic 退栈（JSON / IO / mutex 中毒等），
+            //   panic 被困在子任务里，loop 自身继续存活
+            // - JoinError 不会再被传播为 panic
+            // - 同时 BusyGuard 会在 panic 展开时 drop，自动复位 BUSY
+            let app_clone = app.clone();
+            let _ = tokio::spawn(async move {
+                usage_monitor_poll(&app_clone).await;
+            })
+            .await;
         }
 
         // 20-30 秒随机间隔，每秒检查一次 enabled 标志以便快速响应关闭
@@ -998,6 +1035,10 @@ pub async fn toggle_auto_switch(
             }
         };
 
+        // 防御性清理：上一次会话残留的 BUSY 标志（极端情况下若上次 BusyGuard
+        // 也未能复位）—— 新开启的会话从 BUSY=false 起跑
+        AUTO_SWITCH_BUSY.store(false, Ordering::SeqCst);
+
         // 1. 注入 ExtHost 补丁
         let paths = cursor_paths::get_cursor_paths();
         if let Some(ref bp) = paths.base_path {
@@ -1025,6 +1066,8 @@ pub async fn toggle_auto_switch(
         serde_json::json!({"success": true, "enabled": true})
     } else {
         AUTO_SWITCH_ENABLED.store(false, Ordering::SeqCst);
+        // 关闭时也清 BUSY，确保下次开启从干净状态开始
+        AUTO_SWITCH_BUSY.store(false, Ordering::SeqCst);
         if let Ok(mut guard) = AUTO_SWITCH_CARD_CODE.lock() {
             *guard = None;
         }

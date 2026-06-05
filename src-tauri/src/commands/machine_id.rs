@@ -321,30 +321,18 @@ fn update_sqlite_service_machine_id(db_path: &Path, service_machine_id: &str) ->
 ///
 /// 完整流程（与 MyCursor 的"完全重置"对齐）：
 /// 1. 生成一组完整 ID（dev/machine/mac/sqm/service/guid/sqmClient）
-/// 2. storage.json 写入 7 个字段
+/// 2. storage.json 写入 7 个字段（原子 .tmp + rename）
 /// 3. state.vscdb 同步 storage.serviceMachineId
-/// 4. cursor_dir/machineId 文件 → dev_device_id
-/// 5. 其他 machineId 散落文件 → 随机 UUID
+/// 4. cursor_dir/machineId 文件 → dev_device_id（原子 rename）
+/// 5. 其他 machineId 散落文件 → 随机 UUID（原子 rename）
 /// 6. Windows: 注册表 MachineGuid + SQMClient MachineId
 /// 7. main.js 修补：去掉 getMachineId/getMacMachineId 的 ?? fallback
 ///
-/// 「手动重置」入口 —— 会前置检查 Cursor 是否运行；若在运行直接返回 CURSOR_RUNNING 让前端弹模态。
+/// 设计要点：**所有写入用 .tmp + rename 原子替换**，Cursor 即使在运行也大概率能写入成功 ——
+/// Windows 的 MoveFileEx 在 Cursor 用 FILE_SHARE_DELETE 打开文件时生效；
+/// macOS APFS 的 rename(2) 更宽容，旧 inode 还活着，新 inode 在同一路径建立。
+/// 因此**不再前置检查 Cursor 进程**，手动按钮 / 自动换号 / 一键换号统统走同一份代码。
 pub fn perform_full_machine_id_reset() -> ResetResult {
-    perform_full_machine_id_reset_internal(true)
-}
-
-/// 「自动 / 一键换号」内部入口 —— 不做 Cursor-running 前置检查。
-///
-/// 自动换号需要"无感"，不能要求用户关 Cursor。
-/// 即使 Cursor 在跑，本函数也尽力推进：
-///   - storage.json / state.vscdb / 注册表 → 大概率写入成功
-///   - machineId 文件 → 用原子 rename，绝大多数情况能写入；
-///     仍失败时不影响整体换号流程（调用方通过 `let _ = ...` 容忍）。
-pub fn perform_full_machine_id_reset_force() -> ResetResult {
-    perform_full_machine_id_reset_internal(false)
-}
-
-fn perform_full_machine_id_reset_internal(check_cursor_running: bool) -> ResetResult {
     let cursor_dir = match utils::get_cursor_data_dir() {
         Some(d) => d,
         None => {
@@ -372,19 +360,6 @@ fn perform_full_machine_id_reset_internal(check_cursor_running: bool) -> ResetRe
     let ids = FullMachineIds::generate();
     let mut details: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
-
-    // === 前置检查: Cursor 是否运行（仅手动重置路径）===
-    // 自动换号路径（check_cursor_running=false）跳过本检查：换号要无感，不能要求关 Cursor。
-    // 自动路径的写入用原子 rename 兜底，绝大多数情况文件即使被 Cursor 打开也能替换成功。
-    if check_cursor_running && super::cursor_process::is_cursor_running_sync() {
-        return ResetResult {
-            success: false,
-            message: None,
-            error: Some("CURSOR_RUNNING".to_string()),
-            new_ids: None,
-            details: vec!["[前置检查] Cursor 进程正在运行，文件被独占".to_string()],
-        };
-    }
 
     details.push(format!("[步骤1] 生成新 Machine ID: dev={}, machine={}...",
         &ids.dev_device_id[..8.min(ids.dev_device_id.len())],
