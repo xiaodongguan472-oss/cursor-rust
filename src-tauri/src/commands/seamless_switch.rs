@@ -29,8 +29,14 @@ const EH_PATCH_END: &str = "/* MOCURSO_EH_PATCH_END */";
 ///     —— 关键修复：x-cursor-checksum = `00000000${machineId}/${macMachineId}`
 ///     从 Cursor 启动时的内存值拼接；我们重置 storage.json 不影响内存里的"原始旧 ID"。
 ///     mapping 改为累积式后，无论 Cursor 内存里是 1 代/2 代/N 代前的旧 ID，都能映射到当前新值。
-const EH_PATCH_VERSION: u32 = 5;
+/// v6：日志总开关 —— 默认关掉 JS 端 _mcLG()，不再创建 ~/.cursor-renewal/exthost.log
+const EH_PATCH_VERSION: u32 = 6;
 const EH_PATCH_VERSION_MARKER: &str = "MOCURSO_EH_PATCH_V";
+
+/// JS 端 ExtHost 补丁里 _mcLG() 日志总开关。
+/// release 默认 false（不创建 exthost.log 文件、零 fs.appendFileSync 调用）。
+/// 开发调试时改成 true 重新激活无感换号 → 旧补丁被剥掉 → 新补丁带回完整日志。
+const EXTHOST_LOG_ENABLED: bool = false;
 const CURSOR_API: &str = "https://api2.cursor.sh";
 const CURSOR_WEB: &str = "https://cursor.com";
 const CURSOR_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Cursor/0.50.5 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36";
@@ -89,6 +95,13 @@ fn build_eh_inject_code() -> String {
 
     let version_marker = format!("/* {}{} */", EH_PATCH_VERSION_MARKER, EH_PATCH_VERSION);
 
+    // _mcLG 函数体：日志开关关闭时是空函数（零开销），开启时写文件
+    let mclg_body = if EXTHOST_LOG_ENABLED {
+        "try{_mcF.appendFileSync(_mcLF,'['+new Date().toISOString()+'] '+msg+'\\n');}catch(e){}"
+    } else {
+        "" // no-op：不创建 exthost.log 文件，所有 _mcLG() 调用直接 return undefined
+    };
+
     format!(
         "{start}\n\
 {vmark}\n\
@@ -100,7 +113,7 @@ const _mcOF='{override}';\n\
 const _mcLF='{exthost_log}';\n\
 let _mcTk=null,_mcLt=0;\n\
 let _mcMap=null,_mcMlt=0;\n\
-function _mcLG(msg){{try{{_mcF.appendFileSync(_mcLF,'['+new Date().toISOString()+'] '+msg+'\\n');}}catch(e){{}}}}\n\
+function _mcLG(msg){{{mclg_body}}}\n\
 try{{_mcLG('exthost patch v{ver} loaded; override file = '+_mcOF);}}catch(e){{}}\n\
 function _mcGT(){{const n=Date.now();if(n-_mcLt>500){{_mcLt=n;try{{_mcTk=_mcF.readFileSync(_mcTF,'utf8').trim()||null;}}catch(e){{_mcTk=null;}}}}return _mcTk;}}\n\
 function _mcGM(){{const n=Date.now();if(n-_mcMlt>500){{_mcMlt=n;try{{const r=JSON.parse(_mcF.readFileSync(_mcOF,'utf8'));_mcMap=Array.isArray(r&&r.mappings)?r.mappings.filter(m=>m&&typeof m.old==='string'&&typeof m.new==='string'&&m.old.length>=8):[];}}catch(e){{_mcMap=[];}}}}return _mcMap||[];}}\n\
@@ -119,6 +132,7 @@ try{{if(typeof globalThis.fetch==='function'&&!globalThis._mcOF2){{globalThis._m
         token = token_path,
         override = override_path,
         exthost_log = exthost_log_path,
+        mclg_body = mclg_body,
     )
 }
 

@@ -13,7 +13,14 @@
 use std::sync::{Mutex, OnceLock};
 use std::collections::VecDeque;
 use std::path::PathBuf;
+#[allow(unused_imports)]
 use std::io::Write;
+
+/// 日志总开关 —— release 默认 false（不创建文件、不占内存、不占 CPU）。
+/// 开发调试时改成 true 即可恢复完整日志输出。
+/// 注意：JS 端 ExtHost 补丁的日志由 seamless_switch.rs 里的 EXTHOST_LOG_ENABLED 控制，
+/// 跟这个常量独立。两个都关 → 完全干净不产生任何 .cursor-renewal 下的日志文件。
+const LOG_ENABLED: bool = false;
 
 const MAX_LINES: usize = 200;
 
@@ -31,7 +38,11 @@ fn log_file_path() -> PathBuf {
 }
 
 /// 写一条日志 —— 自动加时间戳；进内存环形缓冲 + 追加到 run.log
+/// 当 LOG_ENABLED=false 时整个函数体跳过，零开销。
 pub fn log_line(line: impl Into<String>) {
+    if !LOG_ENABLED {
+        return;
+    }
     let line = line.into();
     let stamped = format!(
         "[{}] {}",
