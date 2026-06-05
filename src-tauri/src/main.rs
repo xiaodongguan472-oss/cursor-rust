@@ -19,8 +19,15 @@ fn main() {
 
     tauri::Builder::default()
         .setup(|_app| {
-            // 模型解锁自动恢复：如果用户之前开过解锁、证书还在系统信任根里，
-            // 程序启动时静默重启 MITM 代理，无需用户重新点击「激活无感换号」。
+            // 1. 预先初始化 rustls 的 aws-lc-rs crypto provider，
+            //    把首次 ~200-500ms 的 C 库 / 算法表初始化分摊到启动期 ——
+            //    用户点「激活无感换号」时就不用再付这笔启动延迟。
+            tauri::async_runtime::spawn_blocking(|| {
+                commands::unlock_mitm::preinit_crypto_provider();
+            });
+
+            // 2. 模型解锁自动恢复：如果用户之前开过解锁、证书还在系统信任根里，
+            //    程序启动时静默重启 MITM 代理，无需用户重新点击「激活无感换号」。
             tauri::async_runtime::spawn(async {
                 commands::unlock_mitm::auto_restore_on_startup();
             });

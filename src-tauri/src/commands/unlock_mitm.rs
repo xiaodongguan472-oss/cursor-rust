@@ -340,13 +340,21 @@ pub fn start_mitm_in_background() -> Result<(), String> {
         return Ok(());
     }
     ensure_ca_exists()?;
-    // aws-lc-rs 默认 provider 是进程级单例，多次安装是 no-op，但为了未来可能 panic 风险忽略错误
+    // 启动时已经 preload 过一次（process_install_crypto_provider）；
+    // 这里再调一次防止万一漏调用；多次安装是 no-op
     let _ = aws_lc_rs::default_provider().install_default();
 
     tokio::spawn(async {
         let _ = run_proxy().await;
     });
     Ok(())
+}
+
+/// 在程序启动早期调用一次，提前完成 aws-lc-rs crypto provider 的进程级初始化。
+/// 这一步在首次调用时会做 ~200-500ms 的内部初始化（C 库 + 算法表载入）；
+/// 提前到启动期分摊后，用户点「激活无感换号」时就不用再付这笔时间。
+pub fn preinit_crypto_provider() {
+    let _ = aws_lc_rs::default_provider().install_default();
 }
 
 /// 通知运行中的 MITM 代理优雅退出
@@ -784,6 +792,30 @@ pub fn set_node_extra_ca_certs_user(pem: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     let p = pem.to_string_lossy().to_string();
 
+    // 快速路径：先 reg query 看现有值，如果已经是目标路径就跳过 setx —— setx 会广播
+    // WM_SETTINGCHANGE，单次调用 1-3 秒，反复调用很拖速度。
+    let already_correct = match std::process::Command::new("reg")
+        .args(["query", "HKCU\\Environment", "/v", "NODE_EXTRA_CA_CERTS"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            let s = String::from_utf8_lossy(&out.stdout);
+            s.lines().any(|line| {
+                line.contains("NODE_EXTRA_CA_CERTS")
+                    && line.contains("REG_SZ")
+                    && line.contains(p.as_str())
+            })
+        }
+        _ => false,
+    };
+
+    if already_correct {
+        // 当前进程也确认一下
+        std::env::set_var("NODE_EXTRA_CA_CERTS", &p);
+        return Ok(());
+    }
+
     let out = std::process::Command::new("setx")
         .args(["NODE_EXTRA_CA_CERTS", &p])
         .creation_flags(CREATE_NO_WINDOW)
@@ -847,6 +879,24 @@ fn mac_launch_agent_plist_path() -> PathBuf {
 pub fn set_node_extra_ca_certs_user(pem: &Path) -> Result<(), String> {
     let p = pem.to_string_lossy().to_string();
 
+    // 快速路径：检查 launchctl getenv + LaunchAgent plist 是否已经是目标状态。
+    // 若是 → 跳过所有 subprocess + 文件 I/O。每次激活省 ~300-500ms。
+    let plist_path = mac_launch_agent_plist_path();
+    let plist_correct = plist_path.exists()
+        && fs::read_to_string(&plist_path)
+            .map(|c| c.contains(&p))
+            .unwrap_or(false);
+    let env_correct = std::process::Command::new("launchctl")
+        .args(["getenv", "NODE_EXTRA_CA_CERTS"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == p)
+        .unwrap_or(false);
+    if plist_correct && env_correct {
+        std::env::set_var("NODE_EXTRA_CA_CERTS", &p);
+        return Ok(());
+    }
+
     // 1. launchctl setenv：立即让 GUI 会话所有新进程生效
     let out = std::process::Command::new("launchctl")
         .args(["setenv", "NODE_EXTRA_CA_CERTS", &p])
@@ -857,13 +907,13 @@ pub fn set_node_extra_ca_certs_user(pem: &Path) -> Result<(), String> {
         return Err(format!("launchctl setenv 失败: {}", err.trim()));
     }
 
-    // 2. 写 LaunchAgent plist —— 重启后自动重放 setenv
-    let plist_path = mac_launch_agent_plist_path();
-    if let Some(parent) = plist_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("创建 LaunchAgents 目录失败: {}", e))?;
-    }
-    let plist_content = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
+    // 2. 写 LaunchAgent plist —— 重启后自动重放 setenv（已存在且内容正确时跳过写）
+    if !plist_correct {
+        if let Some(parent) = plist_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("创建 LaunchAgents 目录失败: {}", e))?;
+        }
+        let plist_content = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -881,21 +931,24 @@ pub fn set_node_extra_ca_certs_user(pem: &Path) -> Result<(), String> {
 </dict>
 </plist>
 "#,
-        label = MAC_LAUNCH_AGENT_LABEL,
-        pem = xml_escape(&p),
-    );
-    fs::write(&plist_path, plist_content)
-        .map_err(|e| format!("写 LaunchAgent plist 失败: {}", e))?;
+            label = MAC_LAUNCH_AGENT_LABEL,
+            pem = xml_escape(&p),
+        );
+        fs::write(&plist_path, plist_content)
+            .map_err(|e| format!("写 LaunchAgent plist 失败: {}", e))?;
+    }
 
-    // 3. launchctl load 启用（如已 load 失败可忽略；macOS 12+ 推荐用 bootstrap，
-    //    旧版仍兼容 load，这里都试一遍）
-    let plist_str = plist_path.to_string_lossy().to_string();
-    let _ = std::process::Command::new("launchctl")
-        .args(["unload", &plist_str])
-        .output();
-    let _ = std::process::Command::new("launchctl")
-        .args(["load", &plist_str])
-        .output();
+    // 3. launchctl load 启用（仅在 plist 是新写的时候才 unload+load —— 否则白浪费 ~100ms 子进程）
+    //    macOS 12+ 推荐用 bootstrap；旧版仍兼容 load。
+    if !plist_correct {
+        let plist_str = plist_path.to_string_lossy().to_string();
+        let _ = std::process::Command::new("launchctl")
+            .args(["unload", &plist_str])
+            .output();
+        let _ = std::process::Command::new("launchctl")
+            .args(["load", &plist_str])
+            .output();
+    }
 
     // 4. 当前进程也立即生效（不影响 Cursor，但保持一致性）
     std::env::set_var("NODE_EXTRA_CA_CERTS", &p);
@@ -1077,7 +1130,6 @@ pub fn clear_cursor_proxy_settings() -> Result<(), String> {
 }
 
 /// 检查 settings.json 中是否已写入我们的代理键
-#[allow(dead_code)]
 pub fn cursor_proxy_settings_applied() -> bool {
     let s = load_cursor_settings();
     s.get("http.proxy").and_then(|v| v.as_str()) == Some(PROXY_URL)
@@ -1092,24 +1144,26 @@ pub fn cursor_proxy_settings_applied() -> bool {
 pub fn enable_unlock() -> Result<(), String> {
     ensure_ca_exists()?;
 
-    // 1. CA 安装
+    // 1. CA 安装（内部已有 reg query 幂等检查，已装 → 立即返回）
     if let Err(e) = ensure_ca_installed_in_system_store() {
         return Err(format!("CA 安装失败: {}", e));
     }
 
-    // 2. NODE_EXTRA_CA_CERTS
+    // 2. NODE_EXTRA_CA_CERTS（内部已有 reg query 跳过 setx，已设 → 跳过）
     let pem = ca_cert_pem_path();
     if let Err(e) = set_node_extra_ca_certs_user(&pem) {
         // 不致命，但提醒；继续
         eprintln!("[unlock] 设置 NODE_EXTRA_CA_CERTS 失败: {}", e);
     }
 
-    // 3. settings.json
-    if let Err(e) = apply_cursor_proxy_settings() {
-        return Err(format!("写入 Cursor settings.json 失败: {}", e));
+    // 3. settings.json —— 已是目标状态就跳过，避免无意义的文件 I/O
+    if !cursor_proxy_settings_applied() {
+        if let Err(e) = apply_cursor_proxy_settings() {
+            return Err(format!("写入 Cursor settings.json 失败: {}", e));
+        }
     }
 
-    // 4. 启 MITM
+    // 4. 启 MITM（内部已有 MITM_RUNNING 守卫，已跑 → 立即返回）
     if let Err(e) = start_mitm_in_background() {
         return Err(format!("启动 MITM 代理失败: {}", e));
     }

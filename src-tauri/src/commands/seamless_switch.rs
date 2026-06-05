@@ -611,14 +611,14 @@ pub async fn seamless_switch_cmd(
     refresh_token: String,
 ) -> serde_json::Value {
     // 1. 先重置机器码（换号前）
-    let _ = machine_id::perform_full_machine_id_reset();
+    let _ = machine_id::perform_full_machine_id_reset_force();
 
     // 2. 执行换号
     let result = do_seamless_switch(&db_path, &email, &access_token, &refresh_token).await;
 
     // 3. 换号成功后再次重置机器码（确保新账号使用新机器码）
     if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-        let _ = machine_id::perform_full_machine_id_reset();
+        let _ = machine_id::perform_full_machine_id_reset_force();
     }
 
     result
@@ -671,20 +671,33 @@ pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json:
         return serde_json::json!({"success": false, "error": "后端返回的账号信息不完整"});
     }
 
-    // 3. 先重置机器码（换号前）
-    let _ = machine_id::perform_full_machine_id_reset();
+    // 3. 先重置机器码（换号前）——「_force」绕过 Cursor-running 检查；
+    //    捕获结果是为了把状态带回前端做反馈
+    let pre_reset = machine_id::perform_full_machine_id_reset_force();
+    let pre_reset_ok = pre_reset.success;
 
     // 4. Execute seamless switch
     let switch_result = do_seamless_switch(&db_path, email, token, token).await;
+    let switch_ok = switch_result
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     // 5. 换号成功后再次重置机器码（确保新账号使用新机器码）
-    if switch_result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-        let _ = machine_id::perform_full_machine_id_reset();
-    }
+    let post_reset_ok = if switch_ok {
+        machine_id::perform_full_machine_id_reset_force().success
+    } else {
+        false
+    };
 
     let mut result = switch_result;
     if let Some(obj) = result.as_object_mut() {
         obj.insert("email".to_string(), serde_json::json!(email));
+        // 给前端：只要 pre 或 post 任一成功就算重置生效（两次互相兜底）
+        obj.insert(
+            "machineIdReset".to_string(),
+            serde_json::json!(pre_reset_ok || post_reset_ok),
+        );
     }
     result
 }
@@ -819,7 +832,7 @@ async fn usage_monitor_poll(app: &AppHandle) {
     };
 
     // 2. 先重置机器码（换号前）
-    let _ = machine_id::perform_full_machine_id_reset();
+    let _ = machine_id::perform_full_machine_id_reset_force();
 
     // 3. 执行无感换号
     let db_path = utils::get_cursor_db_path()
@@ -833,7 +846,7 @@ async fn usage_monitor_poll(app: &AppHandle) {
 
     // 4. 换号成功后再次重置机器码（确保新账号使用新机器码）
     if switch_ok {
-        let _ = machine_id::perform_full_machine_id_reset();
+        let _ = machine_id::perform_full_machine_id_reset_force();
     }
 
     let _ = app.emit_all(
@@ -892,11 +905,22 @@ async fn usage_monitor_loop(app: AppHandle) {
 static AUTO_REPATCH_LAST_MISSING: AtomicBool = AtomicBool::new(false);
 
 async fn auto_repatch_loop(app: AppHandle) {
-    // 首次延迟 30 秒，避开刚刚 patch 完成的窗口（避免误触发）
-    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+    // 首次延迟 60 秒，避开刚刚 patch 完成的窗口 +
+    // 让 usage_monitor_loop（3s 启动）有充足时间完成第一次轮询
+    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
 
     while AUTO_REPATCH_ENABLED.load(Ordering::SeqCst) {
-        auto_repatch_tick(&app);
+        // 如果自动换号正在忙（写 SQLite / 拉新账号 / emit 事件），
+        // 跳过本次 tick 避免跟换号 I/O 竞争。等下一周期再说。
+        if !AUTO_SWITCH_BUSY.load(Ordering::SeqCst) {
+            // 把同步的 file I/O 放到 spawn_blocking —— 否则读几 MB 的
+            // extensionHostProcess.js 会阻塞 tokio worker 线程，导致同 worker 上
+            // usage_monitor_poll 里 await 中的 HTTPS 调用被卡住（极端情况下会超时）。
+            let app_clone = app.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                auto_repatch_tick(&app_clone);
+            }).await;
+        }
 
         // 67s 间隔，每秒检查 enabled 标志快速响应关闭
         for _ in 0..AUTO_REPATCH_INTERVAL_SECS {

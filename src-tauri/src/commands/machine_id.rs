@@ -250,14 +250,32 @@ fn reset_machine_id_files(cursor_dir: &std::path::Path) {
 
         if *is_json {
             let data = serde_json::json!({"machineId": device_id});
-            let _ = fs::write(file_path, serde_json::to_string_pretty(&data).unwrap_or_default());
+            let content = serde_json::to_string_pretty(&data).unwrap_or_default();
+            let _ = utils::safe_modify_file(file_path, || {
+                let tmp_path = file_path.with_extension("tmp");
+                fs::write(&tmp_path, &content)
+                    .map_err(|e| format!("写 .tmp 失败: {}", e))?;
+                fs::rename(&tmp_path, file_path).map_err(|e| {
+                    let _ = fs::remove_file(&tmp_path);
+                    format!("原子替换失败: {}", e)
+                })
+            });
         } else {
             let id = if file_path.file_name().map(|n| n == "anonymousid").unwrap_or(false) {
                 &anonymous_id
             } else {
                 &device_id
             };
-            let _ = fs::write(file_path, id);
+            let id_clone = id.to_string();
+            let _ = utils::safe_modify_file(file_path, || {
+                let tmp_path = file_path.with_extension("tmp");
+                fs::write(&tmp_path, &id_clone)
+                    .map_err(|e| format!("写 .tmp 失败: {}", e))?;
+                fs::rename(&tmp_path, file_path).map_err(|e| {
+                    let _ = fs::remove_file(&tmp_path);
+                    format!("原子替换失败: {}", e)
+                })
+            });
         }
     }
 }
@@ -309,7 +327,24 @@ fn update_sqlite_service_machine_id(db_path: &Path, service_machine_id: &str) ->
 /// 5. 其他 machineId 散落文件 → 随机 UUID
 /// 6. Windows: 注册表 MachineGuid + SQMClient MachineId
 /// 7. main.js 修补：去掉 getMachineId/getMacMachineId 的 ?? fallback
+///
+/// 「手动重置」入口 —— 会前置检查 Cursor 是否运行；若在运行直接返回 CURSOR_RUNNING 让前端弹模态。
 pub fn perform_full_machine_id_reset() -> ResetResult {
+    perform_full_machine_id_reset_internal(true)
+}
+
+/// 「自动 / 一键换号」内部入口 —— 不做 Cursor-running 前置检查。
+///
+/// 自动换号需要"无感"，不能要求用户关 Cursor。
+/// 即使 Cursor 在跑，本函数也尽力推进：
+///   - storage.json / state.vscdb / 注册表 → 大概率写入成功
+///   - machineId 文件 → 用原子 rename，绝大多数情况能写入；
+///     仍失败时不影响整体换号流程（调用方通过 `let _ = ...` 容忍）。
+pub fn perform_full_machine_id_reset_force() -> ResetResult {
+    perform_full_machine_id_reset_internal(false)
+}
+
+fn perform_full_machine_id_reset_internal(check_cursor_running: bool) -> ResetResult {
     let cursor_dir = match utils::get_cursor_data_dir() {
         Some(d) => d,
         None => {
@@ -337,6 +372,19 @@ pub fn perform_full_machine_id_reset() -> ResetResult {
     let ids = FullMachineIds::generate();
     let mut details: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
+
+    // === 前置检查: Cursor 是否运行（仅手动重置路径）===
+    // 自动换号路径（check_cursor_running=false）跳过本检查：换号要无感，不能要求关 Cursor。
+    // 自动路径的写入用原子 rename 兜底，绝大多数情况文件即使被 Cursor 打开也能替换成功。
+    if check_cursor_running && super::cursor_process::is_cursor_running_sync() {
+        return ResetResult {
+            success: false,
+            message: None,
+            error: Some("CURSOR_RUNNING".to_string()),
+            new_ids: None,
+            details: vec!["[前置检查] Cursor 进程正在运行，文件被独占".to_string()],
+        };
+    }
 
     details.push(format!("[步骤1] 生成新 Machine ID: dev={}, machine={}...",
         &ids.dev_device_id[..8.min(ids.dev_device_id.len())],
@@ -367,12 +415,27 @@ pub fn perform_full_machine_id_reset() -> ResetResult {
     }
 
     // === 步骤 4: 写入 machineId 文件 ===
+    // 关键策略：用 safe_modify_file 处理只读属性 + 原子 rename。
+    // 原子 rename 对 Cursor 运行时也大概率能成功：写到 .tmp → MoveFileEx 替换。
+    // 在 Cursor 用 FILE_SHARE_DELETE 打开文件的情况下，rename 不会被独占阻塞。
     let machine_id_file = cursor_dir.join("machineId");
     utils::clear_macos_immutable_flag(&machine_id_file);
     if let Some(parent) = machine_id_file.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    match fs::write(&machine_id_file, &ids.dev_device_id) {
+    let dev_device_id = ids.dev_device_id.clone();
+    let write_result = utils::safe_modify_file(&machine_id_file, || {
+        let tmp_path = machine_id_file.with_extension("tmp");
+        fs::write(&tmp_path, &dev_device_id)
+            .map_err(|e| format!("写 machineId.tmp 失败: {}", e))?;
+        fs::rename(&tmp_path, &machine_id_file)
+            .map_err(|e| {
+                // rename 失败时 .tmp 留在磁盘上，清理一下
+                let _ = fs::remove_file(&tmp_path);
+                format!("原子替换 machineId 失败: {}", e)
+            })
+    });
+    match write_result {
         Ok(()) => details.push(format!("[步骤4] machineId 文件已写入: {}", machine_id_file.display())),
         Err(e) => {
             details.push(format!("[步骤4] ✗ machineId 文件写入失败: {}", e));

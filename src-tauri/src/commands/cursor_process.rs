@@ -125,6 +125,11 @@ pub async fn check_cursor_running() -> bool {
     is_cursor_running()
 }
 
+/// 同步版本：给同步上下文（如 machine_id 重置前的前置检查）用
+pub fn is_cursor_running_sync() -> bool {
+    is_cursor_running()
+}
+
 #[tauri::command]
 pub async fn force_close_cursor() -> ProcessResult {
     if !is_cursor_running() {
