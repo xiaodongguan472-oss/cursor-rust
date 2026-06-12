@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use sha2::{Sha256, Digest};
 use rusqlite::Connection;
 use tauri::{AppHandle, Manager};
@@ -13,6 +15,11 @@ use super::unlock_mitm;
 static AUTO_SWITCH_ENABLED: AtomicBool = AtomicBool::new(false);
 static AUTO_SWITCH_BUSY: AtomicBool = AtomicBool::new(false);
 static AUTO_SWITCH_CARD_CODE: Mutex<Option<String>> = Mutex::new(None);
+
+// 持久化 HTTP 客户端（连接复用 + keep-alive）
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+// Cloudflare cookie 持久化存储（domain → cookie string）
+static CF_COOKIES: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
 // 自动重补丁监控 —— 检测 Cursor 自更新覆盖 extensionHostProcess.js 后自动重新注入
 static AUTO_REPATCH_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -330,23 +337,160 @@ fn do_clear_active_token() -> bool {
 
 // ========== Usage checking ==========
 
-async fn https_get(url: &str, headers: &[(&str, &str)]) -> Result<serde_json::Value, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
+fn get_http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .pool_idle_timeout(std::time::Duration::from_secs(30))
+            .pool_max_idle_per_host(2)
+            .build()
+            .expect("failed to build HTTP client")
+    })
+}
 
-    let mut req = client.get(url).header("User-Agent", CURSOR_USER_AGENT);
+fn store_cf_cookies(domain: &str, set_cookie_headers: &[String]) {
+    if set_cookie_headers.is_empty() {
+        return;
+    }
+    let cookies: Vec<&str> = set_cookie_headers
+        .iter()
+        .map(|c| c.split(';').next().unwrap_or(""))
+        .filter(|c| !c.is_empty())
+        .collect();
+    if cookies.is_empty() {
+        return;
+    }
+    let cookie_str = cookies.join("; ");
+    if let Ok(mut guard) = CF_COOKIES.lock() {
+        let map = guard.get_or_insert_with(HashMap::new);
+        map.insert(domain.to_string(), cookie_str);
+    }
+}
+
+fn get_cf_cookies(domain: &str) -> Option<String> {
+    CF_COOKIES
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|m| m.get(domain).cloned()))
+}
+
+fn extract_domain(url: &str) -> String {
+    url.split("//")
+        .nth(1)
+        .and_then(|s| s.split('/').next())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// 浏览器风格 HTTP GET，带 Cloudflare bypass 头和 cookie 持久化
+async fn browser_get(
+    url: &str,
+    headers: &[(&str, &str)],
+) -> Result<serde_json::Value, String> {
+    let client = get_http_client();
+    let domain = extract_domain(url);
+
+    let mut req = client
+        .get(url)
+        .header("User-Agent", CURSOR_USER_AGENT)
+        .header(
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        )
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .header("sec-ch-ua", "\"Chromium\";v=\"128\", \"Not;A=Brand\";v=\"24\"")
+        .header("sec-ch-ua-mobile", "?0")
+        .header("sec-ch-ua-platform", "\"Windows\"")
+        .header("sec-fetch-dest", "empty")
+        .header("sec-fetch-mode", "cors")
+        .header("sec-fetch-site", "same-origin")
+        .header("upgrade-insecure-requests", "1");
+
+    // 合并 Cloudflare 持久化 cookie 和自定义 cookie
+    let mut cookie_parts: Vec<String> = Vec::new();
+    if let Some(cf_cookie) = get_cf_cookies(&domain) {
+        cookie_parts.push(cf_cookie);
+    }
+
     for (k, v) in headers {
-        req = req.header(*k, *v);
+        if k.eq_ignore_ascii_case("cookie") {
+            cookie_parts.push(v.to_string());
+        } else {
+            req = req.header(*k, *v);
+        }
+    }
+
+    if !cookie_parts.is_empty() {
+        req = req.header("Cookie", cookie_parts.join("; "));
     }
 
     let resp = req.send().await.map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
+
+    // 提取 Set-Cookie（含 __cf_bm 等 Cloudflare cookie）——必须在消费 body 之前
+    let set_cookies: Vec<String> = resp
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(String::from)
+        .collect();
+
     if status == 401 || status == 403 {
+        store_cf_cookies(&domain, &set_cookies);
         return Err(format!("HTTP {}", status));
     }
-    resp.json().await.map_err(|e| e.to_string())
+
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    store_cf_cookies(&domain, &set_cookies);
+
+    // 检测 Cloudflare challenge 页面（HTML 而非 JSON）
+    let trimmed = text.trim_start();
+    if trimmed.starts_with('<')
+        || text.contains("cf-browser-verification")
+        || text.contains("cf-challenge")
+        || text.contains("Just a moment")
+    {
+        return Err("cloudflare_challenge".to_string());
+    }
+
+    serde_json::from_str(&text).map_err(|e| {
+        format!(
+            "JSON parse error: {} (response: {})",
+            e,
+            &text[..text.len().min(200)]
+        )
+    })
+}
+
+/// 带 Cloudflare 重试的 HTTP GET
+/// 首次请求如被 CF 拦截，等待后利用已存储的 cookie 重试
+async fn browser_get_with_retry(
+    url: &str,
+    headers: &[(&str, &str)],
+    max_retries: u32,
+) -> Result<serde_json::Value, String> {
+    let mut last_err = String::new();
+
+    for attempt in 0..=max_retries {
+        match browser_get(url, headers).await {
+            Ok(json) => return Ok(json),
+            Err(e) => {
+                last_err = e.clone();
+                if e.contains("cloudflare") && attempt < max_retries {
+                    // CF 可能在首次请求的响应中设置了 cookie，等待后带 cookie 重试
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    continue;
+                }
+                if attempt < max_retries && !e.contains("401") && !e.contains("403") {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+            }
+        }
+    }
+
+    Err(last_err)
 }
 
 fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
@@ -385,15 +529,33 @@ async fn fetch_usage_summary(token: &str) -> Result<serde_json::Value, String> {
     let user_id = extract_user_id(token).unwrap_or_default();
     let url = format!("{}/api/usage-summary?user={}", CURSOR_WEB, user_id);
     let cookie = format!("WorkosCursorSessionToken={}%3A%3A{}", user_id, token);
-    https_get(&url, &[
-        ("Cookie", &cookie),
-        ("Referer", &format!("{}/settings", CURSOR_WEB)),
-    ]).await
+    let auth = format!("Bearer {}", token);
+    let referer = format!("{}/settings", CURSOR_WEB);
+    browser_get_with_retry(
+        &url,
+        &[
+            ("Cookie", &cookie),
+            ("Authorization", &auth),
+            ("Referer", &referer),
+            ("Content-Type", "application/json"),
+        ],
+        1,
+    )
+    .await
 }
 
 async fn fetch_stripe_profile(token: &str) -> Result<serde_json::Value, String> {
     let url = format!("{}/auth/full_stripe_profile", CURSOR_API);
-    https_get(&url, &[("Authorization", &format!("Bearer {}", token))]).await
+    let auth = format!("Bearer {}", token);
+    browser_get_with_retry(
+        &url,
+        &[
+            ("Authorization", &auth),
+            ("Content-Type", "application/json"),
+        ],
+        1,
+    )
+    .await
 }
 
 async fn do_check_account_status(token: &str) -> serde_json::Value {
@@ -409,7 +571,7 @@ async fn do_check_account_status(token: &str) -> serde_json::Value {
         });
     }
 
-    // ── 检查 2: 调 /api/usage-summary（核心检测，与 Electron 一致） ──
+    // ── 检查 2: 调 /api/usage-summary ──
     let mut percent_used: f64 = 0.0;
     let membership;
     let display_message;
@@ -441,7 +603,6 @@ async fn do_check_account_status(token: &str) -> serde_json::Value {
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0);
 
-                // ★ 唯一换号条件：总用量 >= 95%
                 if percent_used >= 95.0 {
                     needs_switch = true;
                     reason = "quota_exhausted_percent".to_string();
@@ -450,10 +611,17 @@ async fn do_check_account_status(token: &str) -> serde_json::Value {
         }
         Err(e) => {
             if e.contains("401") || e.contains("403") {
-                // API 认证失败，标记原因让上层累计判断（不立即换号）
                 return serde_json::json!({
                     "needsSwitch": false,
                     "reason": "api_auth_failed",
+                    "percentUsed": 0,
+                    "error": e
+                });
+            }
+            if e.contains("cloudflare") {
+                return serde_json::json!({
+                    "needsSwitch": false,
+                    "reason": "cloudflare_blocked",
                     "percentUsed": 0,
                     "error": e
                 });
@@ -462,8 +630,7 @@ async fn do_check_account_status(token: &str) -> serde_json::Value {
                 "needsSwitch": false,
                 "reason": "network_error",
                 "percentUsed": 0,
-                "error": e,
-                "displayMessage": e
+                "error": e
             });
         }
     }
@@ -886,13 +1053,92 @@ async fn fetch_new_account_with_retry(
     Err("重试次数用尽".to_string())
 }
 
+/// 调用后端验证服务二次确认 token 额度（经主后端转发，绕过客户端 Cloudflare 拦截）
+/// 返回 None 表示服务不可达
+async fn call_verify_service(token: &str) -> Option<serde_json::Value> {
+    let api_url_owned = utils::api_url(obfstr::obfstr!("/hou/csk/verify-token-v2"));
+    let api_url = api_url_owned.as_str();
+    let body = serde_json::json!({ "token": token });
+
+    match utils::http_post_json(api_url, &body).await {
+        Ok(data) => {
+            crate::ulog!(
+                "[VerifyService] 结果: canSwitch={} | {}% | reason={}",
+                data.get("canSwitch").and_then(|v| v.as_bool()).unwrap_or(false),
+                data.get("percentUsed").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                data.get("reason").and_then(|v| v.as_str()).unwrap_or("")
+            );
+            Some(data)
+        }
+        Err(e) => {
+            crate::ulog!("[VerifyService] 不可达: {}", e);
+            None
+        }
+    }
+}
+
 async fn usage_monitor_poll(app: &AppHandle) {
     let token = match do_read_active_token() {
         Some(t) => t,
         None => return,
     };
 
-    let status = do_check_account_status(&token).await;
+    // 首次检测：本地直接调 Cursor 官方 API
+    let mut status = do_check_account_status(&token).await;
+    let has_error = status.get("error").is_some();
+    let reason = status
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // token 问题（过期/不存在）是确定性结论，无需二次检测
+    let is_token_issue = reason == "no_token" || reason == "token_expired";
+
+    if !is_token_issue && has_error {
+        // ── 本地检测失败（Cloudflare/网络/认证），调后端验证服务二次确认 ──
+        crate::ulog!(
+            "[AutoSwitch] 本地检测失败({}), 调用验证服务二次确认...",
+            reason
+        );
+
+        match call_verify_service(&token).await {
+            Some(verify) => {
+                let can_switch = verify
+                    .get("canSwitch")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if !can_switch {
+                    crate::ulog!(
+                        "[AutoSwitch] 验证服务确认: 还有额度({}%), 不换号",
+                        verify.get("percentUsed").and_then(|v| v.as_f64()).unwrap_or(0.0)
+                    );
+                    return;
+                }
+                crate::ulog!(
+                    "[AutoSwitch] 验证服务确认: 需要换号({}%, {})",
+                    verify.get("percentUsed").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                    verify.get("reason").and_then(|v| v.as_str()).unwrap_or("")
+                );
+                if let Some(obj) = status.as_object_mut() {
+                    obj.insert("needsSwitch".to_string(), serde_json::json!(true));
+                    if let Some(p) = verify.get("percentUsed") {
+                        obj.insert("percentUsed".to_string(), p.clone());
+                    }
+                    if let Some(r) = verify.get("reason") {
+                        obj.insert("reason".to_string(), r.clone());
+                    }
+                    obj.remove("error");
+                }
+            }
+            None => {
+                // 验证服务不可达 → 保守策略，不换号
+                crate::ulog!("[AutoSwitch] 验证服务不可达，保守不换号");
+                return;
+            }
+        }
+    }
+
     let needs_switch = status
         .get("needsSwitch")
         .and_then(|v| v.as_bool())

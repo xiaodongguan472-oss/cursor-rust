@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "续杯助手",
-    "version": "9.4.0"
+    "version": "9.5.0"
   },
   "tauri": {
     "allowlist": {
