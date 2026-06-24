@@ -597,15 +597,27 @@ async fn do_check_account_status(token: &str) -> serde_json::Value {
                     .get("totalPercentUsed")
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0);
+                let auto_percent_used = plan
+                    .get("autoPercentUsed")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
                 total_quota = plan
                     .get("breakdown")
                     .and_then(|b| b.get("total"))
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0);
 
+                // 判定 1：总用量阈值
                 if percent_used >= 95.0 {
                     needs_switch = true;
                     reason = "quota_exhausted_percent".to_string();
+                }
+                // 判定 2：Auto 模型耗尽（free 账号典型特征 ——
+                // totalPercentUsed 因 breakdown 口径低于 95 不命中，但 auto 池子已经满）
+                // 对齐老 Electron 版 checkAccountStatus 第二条判据
+                else if auto_percent_used >= 100.0 && total_quota > 0.0 {
+                    needs_switch = true;
+                    reason = "auto_model_exhausted".to_string();
                 }
             }
         }
