@@ -264,3 +264,99 @@ pub async fn modify_cursor_workbench(
         Err(e) => ModifyResult { success: false, message: None, error: Some(e) },
     }
 }
+
+/// 启动时确保 Cursor 用户 settings.json 中 `"update.mode": "none"`，禁用自动更新。
+///
+/// settings.json 是 JSONC（允许 `//` 注释与尾随逗号），serde_json 严格解析会失败，
+/// 因此分两条路线处理：
+///   - 文件能被严格解析（干净 JSON，无注释）→ 直接改 Value 后用 pretty 回写；
+///   - 解析失败（含注释/尾逗号）→ 在文本层面用正则替换/插入，保留用户注释。
+/// 仅在确实需要改动时才写盘，避免无谓触碰文件（也降低 Cursor 运行时占用导致的写冲突）。
+pub fn ensure_auto_update_disabled() {
+    let path = match utils::get_cursor_settings_json_path() {
+        Some(p) => p,
+        None => {
+            crate::ulog!("[AutoUpdate] 无法定位 settings.json 路径，跳过");
+            return;
+        }
+    };
+
+    // 读取现有内容；文件不存在或为空 → 创建最小配置
+    let content = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(_) => {
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let body = "{\n    \"update.mode\": \"none\"\n}\n";
+            match fs::write(&path, body) {
+                Ok(_) => { crate::ulog!("[AutoUpdate] settings.json 不存在，已创建并写入 update.mode=none"); }
+                Err(e) => { crate::ulog!("[AutoUpdate] 创建 settings.json 失败: {}", e); }
+            }
+            return;
+        }
+    };
+
+    if content.trim().is_empty() {
+        let body = "{\n    \"update.mode\": \"none\"\n}\n";
+        match fs::write(&path, body) {
+            Ok(_) => { crate::ulog!("[AutoUpdate] settings.json 为空，已写入 update.mode=none"); }
+            Err(e) => { crate::ulog!("[AutoUpdate] 写入空 settings.json 失败: {}", e); }
+        }
+        return;
+    }
+
+    // 路线 A：严格 JSON 解析成功（无注释/尾逗号）→ 用 Value 安全改写
+    if let Ok(serde_json::Value::Object(mut map)) = serde_json::from_str::<serde_json::Value>(&content) {
+        if map.get("update.mode").and_then(|v| v.as_str()) == Some("none") {
+            crate::ulog!("[AutoUpdate] update.mode 已为 none，无需改动");
+            return;
+        }
+        map.insert("update.mode".to_string(), serde_json::Value::String("none".to_string()));
+        match serde_json::to_string_pretty(&serde_json::Value::Object(map)) {
+            Ok(out) => match fs::write(&path, out) {
+                Ok(_) => { crate::ulog!("[AutoUpdate] 已设置 update.mode=none（JSON 模式）"); }
+                Err(e) => { crate::ulog!("[AutoUpdate] 回写 settings.json 失败: {}", e); }
+            },
+            Err(e) => { crate::ulog!("[AutoUpdate] 序列化 settings.json 失败: {}", e); }
+        }
+        return;
+    }
+
+    // 路线 B：JSONC（含注释/尾逗号）→ 文本层面处理，保留注释
+    if content.contains("\"update.mode\"") {
+        // 已是 none → 跳过
+        let none_re = regex::Regex::new(r#""update\.mode"\s*:\s*"none""#).unwrap();
+        if none_re.is_match(&content) {
+            crate::ulog!("[AutoUpdate] update.mode 已为 none，无需改动（JSONC）");
+            return;
+        }
+        // 替换已有键的字符串值
+        let key_re = regex::Regex::new(r#"("update\.mode"\s*:\s*)"[^"]*""#).unwrap();
+        if key_re.is_match(&content) {
+            let new_content = key_re.replace(&content, r#"${1}"none""#).to_string();
+            match fs::write(&path, new_content) {
+                Ok(_) => { crate::ulog!("[AutoUpdate] 已将 update.mode 改为 none（JSONC 替换）"); }
+                Err(e) => { crate::ulog!("[AutoUpdate] 回写 settings.json 失败: {}", e); }
+            }
+        } else {
+            // 键存在但值不是简单字符串 → 不擅自改动，避免破坏配置
+            crate::ulog!("[AutoUpdate] 检测到 update.mode 但值格式异常，未自动修改");
+        }
+        return;
+    }
+
+    // 没有该键 → 在第一个 '{' 之后插入（尾逗号在 JSONC 中合法）
+    if let Some(idx) = content.find('{') {
+        let mut new_content = String::with_capacity(content.len() + 32);
+        new_content.push_str(&content[..=idx]);
+        new_content.push_str("\n    \"update.mode\": \"none\",");
+        new_content.push_str(&content[idx + 1..]);
+        match fs::write(&path, new_content) {
+            Ok(_) => { crate::ulog!("[AutoUpdate] 已插入 update.mode=none（JSONC 插入）"); }
+            Err(e) => { crate::ulog!("[AutoUpdate] 回写 settings.json 失败: {}", e); }
+        }
+    } else {
+        crate::ulog!("[AutoUpdate] settings.json 内容异常（缺少对象起始），跳过");
+    }
+}

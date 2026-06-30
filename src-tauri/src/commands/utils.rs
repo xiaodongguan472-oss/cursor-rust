@@ -125,6 +125,11 @@ pub fn get_cursor_storage_json_path() -> Option<PathBuf> {
     get_cursor_data_dir().map(|d| d.join("User").join("globalStorage").join("storage.json"))
 }
 
+/// Get the Cursor user settings.json path (用户配置，含 update.mode 等)
+pub fn get_cursor_settings_json_path() -> Option<PathBuf> {
+    get_cursor_data_dir().map(|d| d.join("User").join("settings.json"))
+}
+
 /// Get the app's user data directory for storing settings, card info, etc.
 pub fn get_app_data_dir() -> PathBuf {
     #[cfg(target_os = "windows")]

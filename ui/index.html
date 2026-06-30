@@ -6770,7 +6770,7 @@
 
             // 版本检查相关
 
-            currentVersion: '9.6', // 当前版本号，需要与显示的版本号保持一致
+            currentVersion: '9.7', // 当前版本号，需要与显示的版本号保持一致
 
             latestVersion: null,   // 最新版本号
 
@@ -7308,8 +7308,8 @@
 
             } else if (data.error) {
 
-              if (String(data.error).includes('Operation not permitted') || String(data.error).includes('os error 1')) {
-                ElMessage.error({ message: '权限不足，请前往：设置 → 隐私与安全性 → App管理 → 打开续杯工具的开关', duration: 6000 });
+              if (this.isPermissionError(data.error)) {
+                this.showPermissionTip();
               } else {
                 ElMessage.error('自动换号失败: ' + data.error);
               }
@@ -7335,15 +7335,38 @@
 
         methods: {
 
-          // 检测 macOS 权限错误并提示用户
-          isMacPermissionError(errorMsg) {
+          // 判断当前运行平台是否为 macOS
+          isMacOS() {
+            return navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+          },
+          // 检测系统权限 / 文件占用类错误（mac 与 windows 区分判断，避免子串误伤）
+          isPermissionError(errorMsg) {
             if (!errorMsg) return false;
             const msg = String(errorMsg);
-            return msg.includes('Operation not permitted') || msg.includes('os error 1');
+            this._lastPermErr = msg;
+            if (this.isMacOS()) {
+              // macOS：EPERM = Operation not permitted = (os error 1)，必须精确匹配 1，否则 1224 等会误命中
+              return msg.includes('Operation not permitted') || /\(os error 1\)/.test(msg);
+            }
+            // Windows：拒绝访问(5) / 共享冲突(32) / 锁冲突(33) / 文件被内存映射占用(1224) 等
+            return /\(os error (5|32|33|1224)\)/.test(msg)
+              || msg.includes('Access is denied')
+              || msg.includes('拒绝访问');
           },
-          showMacPermissionTip() {
+          // 根据平台给出对应的权限提示
+          showPermissionTip() {
+            if (this.isMacOS()) {
+              ElMessage.error({
+                message: '权限不足，请前往：设置 → 隐私与安全性 → App管理 → 打开续杯工具的开关',
+                duration: 6000
+              });
+              return;
+            }
+            // Windows：文件被占用/锁定 → 操作被限制；其余权限问题 → 权限不足。两者都引导重启工具重试
+            const msg = String(this._lastPermErr || '');
+            const locked = /\(os error (32|33|1224)\)/.test(msg);
             ElMessage.error({
-              message: '权限不足，请前往：设置 → 隐私与安全性 → App管理 → 打开续杯工具的开关',
+              message: locked ? '操作被限制，请重启续杯工具重试' : '权限不足，请重启续杯工具重试',
               duration: 6000
             });
           },
@@ -10959,7 +10982,7 @@
                 } else {
 
                   const err = result.error || '未知错误';
-                  if (this.isMacPermissionError(err)) { this.showMacPermissionTip(); } else { ElMessage.error('操作失败: ' + err); }
+                  if (this.isPermissionError(err)) { this.showPermissionTip(); } else { ElMessage.error('操作失败: ' + err); }
 
                 }
 
@@ -10978,7 +11001,7 @@
                 } else {
 
                   const err = result.error || '未知错误';
-                  if (this.isMacPermissionError(err)) { this.showMacPermissionTip(); } else { ElMessage.error('操作失败: ' + err); }
+                  if (this.isPermissionError(err)) { this.showPermissionTip(); } else { ElMessage.error('操作失败: ' + err); }
 
                 }
 
@@ -10988,7 +11011,7 @@
 
               console.error('切换 ExtensionHost 补丁失败:', error);
 
-              if (this.isMacPermissionError(error.message)) { this.showMacPermissionTip(); } else { ElMessage.error('操作失败: ' + error.message); }
+              if (this.isPermissionError(error.message)) { this.showPermissionTip(); } else { ElMessage.error('操作失败: ' + error.message); }
 
             }
 
@@ -11309,8 +11332,8 @@
               } else {
 
                 const errorMsg = result?.error || '未知错误';
-                if (this.isMacPermissionError(errorMsg)) {
-                  this.showMacPermissionTip();
+                if (this.isPermissionError(errorMsg)) {
+                  this.showPermissionTip();
                 } else {
                   ElMessage.error('重置机器码失败: ' + errorMsg);
                 }
@@ -11321,8 +11344,8 @@
 
               console.error('重置机器码异常:', error);
 
-              if (this.isMacPermissionError(error.message)) {
-                this.showMacPermissionTip();
+              if (this.isPermissionError(error.message)) {
+                this.showPermissionTip();
               } else {
                 ElMessage.error('重置机器码异常: ' + error.message);
               }
@@ -11434,7 +11457,7 @@
                 } else {
 
                   const err = patchResult.error || '未知错误';
-                  if (this.isMacPermissionError(err)) { this.showMacPermissionTip(); } else { ElMessage.error('操作失败: ' + err); }
+                  if (this.isPermissionError(err)) { this.showPermissionTip(); } else { ElMessage.error('操作失败: ' + err); }
 
                   return;
 
@@ -11442,7 +11465,7 @@
 
               } catch (e) {
 
-                if (this.isMacPermissionError(e.message)) { this.showMacPermissionTip(); } else { ElMessage.error('操作失败: ' + e.message); }
+                if (this.isPermissionError(e.message)) { this.showPermissionTip(); } else { ElMessage.error('操作失败: ' + e.message); }
 
                 return;
 
@@ -11545,7 +11568,7 @@
               } else {
 
                 const err = result?.error || '未知错误';
-                if (this.isMacPermissionError(err)) { this.showMacPermissionTip(); } else { ElMessage.error('一键换号失败: ' + err); }
+                if (this.isPermissionError(err)) { this.showPermissionTip(); } else { ElMessage.error('一键换号失败: ' + err); }
 
               }
 
@@ -11553,7 +11576,7 @@
 
               console.error('一键换号异常:', error);
 
-              if (this.isMacPermissionError(error.message)) { this.showMacPermissionTip(); } else { ElMessage.error('一键换号异常: ' + error.message); }
+              if (this.isPermissionError(error.message)) { this.showPermissionTip(); } else { ElMessage.error('一键换号异常: ' + error.message); }
 
             } finally {
 

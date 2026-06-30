@@ -688,7 +688,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-renewal"
-version = "9.5.0"
+version = "9.7.0"
 dependencies = [
  "base64 0.21.7",
  "chrono",

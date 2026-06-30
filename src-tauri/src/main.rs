@@ -31,6 +31,11 @@ fn main() {
             tauri::async_runtime::spawn(async {
                 commands::unlock_mitm::auto_restore_on_startup();
             });
+
+            // 3. 禁用 Cursor 自动更新：确保用户 settings.json 中 update.mode = none
+            tauri::async_runtime::spawn_blocking(|| {
+                commands::cursor_modify::ensure_auto_update_disabled();
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

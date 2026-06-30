@@ -40,6 +40,18 @@ const EH_PATCH_END: &str = "/* MOCURSO_EH_PATCH_END */";
 const EH_PATCH_VERSION: u32 = 6;
 const EH_PATCH_VERSION_MARKER: &str = "MOCURSO_EH_PATCH_V";
 
+// === util 单例进程补丁（Cursor 3.9+ 把 AI 请求挪到了 electron-utility 单例进程）===
+// 该进程用 ESM 命名空间导入 http2（import * as x from "node:http2"），命名空间绑定是
+// 快照，require('http2').connect= 覆盖对它无效；因此改为 patch ClientHttp2Session.prototype.request
+// —— 所有 client http2 会话共享同一原型，方法在调用时解析，无论怎么导入都能拦到。
+const UTIL_PATCH_START: &str = "/* MOCURSO_UTIL_PATCH_START */";
+const UTIL_PATCH_END: &str = "/* MOCURSO_UTIL_PATCH_END */";
+/// util 补丁版本号 —— 每次改 build_util_inject_code 都要 +1（旧版本检测到会自动卸载重装）。
+const UTIL_PATCH_VERSION: u32 = 1;
+const UTIL_PATCH_VERSION_MARKER: &str = "MOCURSO_UTIL_PATCH_V";
+/// util 补丁里 _muLG() 日志开关。release 默认 false（不写 util_patch.log，零开销）。
+const UTIL_LOG_ENABLED: bool = false;
+
 /// JS 端 ExtHost 补丁里 _mcLG() 日志总开关。
 /// release 默认 false（不创建 exthost.log 文件、零 fs.appendFileSync 调用）。
 /// 开发调试时改成 true 重新激活无感换号 → 旧补丁被剥掉 → 新补丁带回完整日志。
@@ -82,6 +94,25 @@ fn get_ext_host_js_path(cursor_install_path: &Path) -> PathBuf {
             .join("api")
             .join("node")
             .join("extensionHostProcess.js")
+    }
+}
+
+/// util 单例进程文件路径（Cursor 3.9+ 的 electron-utility 单例进程）。
+/// 旧版本 Cursor 没有这个文件，调用方需容忍其不存在。
+fn get_util_singleton_js_path(cursor_install_path: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        cursor_install_path
+            .join("Contents").join("Resources").join("app").join("out")
+            .join("vs").join("code").join("electron-utility")
+            .join("alwaysLocalSingleton").join("alwaysLocalSingletonMain.js")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        cursor_install_path
+            .join("resources").join("app").join("out")
+            .join("vs").join("code").join("electron-utility")
+            .join("alwaysLocalSingleton").join("alwaysLocalSingletonMain.js")
     }
 }
 
@@ -141,6 +172,91 @@ try{{if(typeof globalThis.fetch==='function'&&!globalThis._mcOF2){{globalThis._m
         exthost_log = exthost_log_path,
         mclg_body = mclg_body,
     )
+}
+
+/// 构造 util 单例进程的注入代码（patch ClientHttp2Session.prototype.request）。
+/// token / 映射文件路径在 JS 端用 os.homedir() 运行时解析，避免烤死绝对路径在异机错位。
+fn build_util_inject_code() -> String {
+    let vmark = format!("/* {}{} */", UTIL_PATCH_VERSION_MARKER, UTIL_PATCH_VERSION);
+    // _muLG 函数体：日志关闭时为空函数（零开销）
+    let log_body = if UTIL_LOG_ENABLED {
+        r#"try{_muFS.appendFileSync(_muLF,'['+new Date().toISOString()+'] '+m+'\n');}catch(e){}"#
+    } else {
+        ""
+    };
+    let js = r##"__START__
+__VMARK__
+const _muM=await import('node:module');
+const _muR=_muM.createRequire(import.meta.url);
+const _muOS=_muR('os');
+const _muFS=_muR('fs');
+const _muH2=_muR('http2');
+const _muHOME=_muOS.homedir()||'';
+const _muTF=_muHOME+'/.cursor-renewal/active_token';
+const _muOF=_muHOME+'/.cursor-renewal/machine_id_override';
+const _muLF=_muHOME+'/.cursor-renewal/util_patch.log';
+function _muLG(m){__LOGBODY__}
+let _muTk=null,_muTt=0;
+function _muGT(){const n=Date.now();if(n-_muTt>500){_muTt=n;try{_muTk=_muFS.readFileSync(_muTF,'utf8').trim()||null;}catch(e){_muTk=null;}}return _muTk;}
+let _muMap=null,_muMt=0;
+function _muGM(){const n=Date.now();if(n-_muMt>500){_muMt=n;try{const r=JSON.parse(_muFS.readFileSync(_muOF,'utf8'));_muMap=Array.isArray(r&&r.mappings)?r.mappings.filter(m=>m&&typeof m.old==='string'&&typeof m.new==='string'&&m.old.length>=8):[];}catch(e){_muMap=[];}}return _muMap||[];}
+function _muSR(s){if(typeof s!=='string')return s;const map=_muGM();if(!map.length)return s;let o=s;for(const m of map){if(o.indexOf(m.old)!==-1)o=o.split(m.old).join(m.new);}return o;}
+function _muPH(h){if(!h||typeof h!=='object')return;try{for(const k of Object.keys(h)){const v=h[k];if(typeof v==='string'){const nv=_muSR(v);if(nv!==v)h[k]=nv;}else if(Array.isArray(v)){h[k]=v.map(x=>typeof x==='string'?_muSR(x):x);}}}catch(e){}}
+function _muBR(buf){const map=_muGM();if(!buf||buf.length<8||!map.length)return buf;let out=buf,n=0;for(const m of map){if(m.old.length!==m.new.length)continue;const ob=Buffer.from(m.old,'utf8'),nb=Buffer.from(m.new,'utf8');if(ob.length!==nb.length)continue;let i=0,w=null;while(true){const f=out.indexOf(ob,i);if(f===-1)break;if(w===null)w=Buffer.from(out);nb.copy(w,f);i=f+ob.length;n++;}if(w!==null)out=w;}return out;}
+function _muPB(b){if(b==null)return b;try{if(typeof b==='string'){return _muSR(b);}if(Buffer.isBuffer(b))return _muBR(b);if(b instanceof Uint8Array)return _muBR(Buffer.from(b.buffer,b.byteOffset,b.byteLength));}catch(e){}return b;}
+function _muAuthority(sess){try{for(const s of Object.getOwnPropertySymbols(sess)){if(s.toString()==='Symbol(authority)')return String(sess[s]||'');}}catch(e){}return '';}
+try{
+  let _muProto=null;
+  try{const _t=_muH2.connect('http://127.0.0.1:1');_t.on('error',()=>{});_muProto=Object.getPrototypeOf(_t);try{_t.destroy();}catch(e){}}catch(e){_muLG('get proto failed: '+e);}
+  if(_muProto&&typeof _muProto.request==='function'&&!_muProto.__muPatched){
+    _muProto.__muPatched=true;
+    const _origReq=_muProto.request;
+    _muProto.request=function(headers,...rest){
+      try{
+        const auth=_muAuthority(this);
+        const hAuth=headers&&(headers[':authority']||headers['host']||'');
+        const isCursor=(auth&&(auth.includes('cursor.sh')||auth.includes('cursor.com')))||(hAuth&&(String(hAuth).includes('cursor.sh')||String(hAuth).includes('cursor.com')));
+        if(isCursor&&headers&&typeof headers==='object'){
+          const t=_muGT();
+          if(t)headers['authorization']='Bearer '+t;
+          _muPH(headers);
+          _muLG('intercept '+auth+' token='+(t?'YES':'NO'));
+          const _rs=_origReq.call(this,headers,...rest);
+          try{
+            const _ow=_rs.write?_rs.write.bind(_rs):null;
+            if(_ow)_rs.write=function(c,...rr){return _ow(_muPB(c),...rr);};
+            const _oe=_rs.end?_rs.end.bind(_rs):null;
+            if(_oe)_rs.end=function(c,...rr){if(c==null)return _oe(...rr);return _oe(_muPB(c),...rr);};
+          }catch(e){}
+          return _rs;
+        }
+      }catch(e){_muLG('hook err '+e);}
+      return _origReq.call(this,headers,...rest);
+    };
+    _muLG('util patch v1 loaded, prototype.request patched');
+  }else{_muLG('util patch: proto unavailable or already patched');}
+}catch(e){_muLG('util patch fatal '+e);}
+__END__
+"##;
+    js.replace("__START__", UTIL_PATCH_START)
+        .replace("__END__", UTIL_PATCH_END)
+        .replace("__VMARK__", &vmark)
+        .replace("__LOGBODY__", log_body)
+}
+
+/// 通用：删掉 content 中 start..end 区间（含两端标记），找不到则原样返回。
+fn strip_patch_block(content: &str, start: &str, end: &str) -> String {
+    if let (Some(s), Some(e)) = (content.find(start), content.find(end)) {
+        let end_with = e + end.len();
+        let mut out = String::with_capacity(content.len());
+        out.push_str(&content[..s]);
+        if end_with < content.len() {
+            out.push_str(&content[end_with..]);
+        }
+        out.trim_start().to_string()
+    } else {
+        content.to_string()
+    }
 }
 
 /// 把文件里 EH_PATCH_START..EH_PATCH_END 区间删掉（含两端标记），返回剩余内容。
@@ -315,6 +431,167 @@ fn do_check_ext_host_patched(cursor_install_path: &Path) -> bool {
     } else {
         false
     }
+}
+
+// ========== util 单例进程补丁（Cursor 3.9+） ==========
+
+/// 给 util 单例进程注入补丁。旧版本无此文件 → 返回 success:true + skipped:true（不算失败）。
+fn do_patch_util_singleton(cursor_install_path: &Path) -> serde_json::Value {
+    let path = get_util_singleton_js_path(cursor_install_path);
+    crate::ulog!("[Util] patch start, target = {}", path.display());
+
+    if !path.exists() {
+        crate::ulog!("[Util] file not found, skip（旧版本无此进程）");
+        return serde_json::json!({"success": true, "patched": false, "skipped": true, "message": "无 util 单例进程（旧版本）"});
+    }
+
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            crate::ulog!("[Util] ✗ read failed: {}", e);
+            return serde_json::json!({"success": false, "patched": false, "error": format!("读取文件失败: {}", e)});
+        }
+    };
+
+    // 已打补丁 → 检查版本
+    let current_version_marker = format!("{}{}", UTIL_PATCH_VERSION_MARKER, UTIL_PATCH_VERSION);
+    if content.contains(UTIL_PATCH_START) {
+        if content.contains(&current_version_marker) {
+            crate::ulog!("[Util] already patched v{} (skip)", UTIL_PATCH_VERSION);
+            return serde_json::json!({"success": true, "patched": true, "message": "util 已是最新补丁"});
+        }
+        crate::ulog!("[Util] old version detected, stripping...");
+        let stripped = strip_patch_block(&content, UTIL_PATCH_START, UTIL_PATCH_END);
+        let wr = utils::safe_modify_file(&path, || {
+            fs::write(&path, &stripped).map_err(|e| format!("剥旧补丁失败: {}", e))
+        });
+        if let Err(e) = wr {
+            crate::ulog!("[Util] ✗ strip failed: {}", e);
+            return serde_json::json!({"success": false, "patched": false, "error": e});
+        }
+    }
+
+    // 备份（仅首次）
+    let backup = format!("{}.bak", path.to_string_lossy());
+    if !Path::new(&backup).exists() {
+        let _ = fs::copy(&path, &backup);
+    }
+
+    let current = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            crate::ulog!("[Util] ✗ re-read after strip failed: {}", e);
+            return serde_json::json!({"success": false, "patched": false, "error": format!("剥旧补丁后再读失败: {}", e)});
+        }
+    };
+
+    let inject = build_util_inject_code();
+    let new_content = format!("{}{}", inject, current);
+
+    let wr = utils::safe_modify_file(&path, || {
+        fs::write(&path, &new_content).map_err(|e| format!("写入文件失败: {}", e))
+    });
+
+    match wr {
+        Ok(()) => {
+            crate::ulog!("[Util] ✓ injected v{}, size = {} bytes", UTIL_PATCH_VERSION, new_content.len());
+            #[cfg(target_os = "macos")]
+            {
+                let app_path = cursor_install_path.to_string_lossy();
+                let _ = std::process::Command::new("xattr").args(["-cr", &app_path]).output();
+                let _ = std::process::Command::new("codesign").args(["--force", "--deep", "--sign", "-", &app_path]).output();
+            }
+            serde_json::json!({"success": true, "patched": true, "message": "util 补丁注入成功"})
+        }
+        Err(e) => serde_json::json!({"success": false, "patched": false, "error": e}),
+    }
+}
+
+/// 移除 util 单例进程补丁。文件不存在 / 无补丁 → 视为成功。
+fn do_unpatch_util_singleton(cursor_install_path: &Path) -> serde_json::Value {
+    let path = get_util_singleton_js_path(cursor_install_path);
+    if !path.exists() {
+        return serde_json::json!({"success": true, "patched": false, "message": "无 util 文件"});
+    }
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => return serde_json::json!({"success": false, "error": e.to_string()}),
+    };
+    if !content.contains(UTIL_PATCH_START) {
+        return serde_json::json!({"success": true, "patched": false, "message": "未检测到 util 补丁"});
+    }
+    let new_content = strip_patch_block(&content, UTIL_PATCH_START, UTIL_PATCH_END);
+    let wr = utils::safe_modify_file(&path, || {
+        fs::write(&path, &new_content).map_err(|e| format!("写入失败: {}", e))
+    });
+    match wr {
+        Ok(()) => {
+            #[cfg(target_os = "macos")]
+            {
+                let app_path = cursor_install_path.to_string_lossy();
+                let _ = std::process::Command::new("xattr").args(["-cr", &app_path]).output();
+                let _ = std::process::Command::new("codesign").args(["--force", "--deep", "--sign", "-", &app_path]).output();
+            }
+            serde_json::json!({"success": true, "patched": false, "message": "util 补丁已移除"})
+        }
+        Err(e) => serde_json::json!({"success": false, "patched": true, "error": e}),
+    }
+}
+
+/// 检查 util 补丁：Some(true/false) 表示文件存在且已/未打；None 表示文件不存在（旧版本无需）。
+fn do_check_util_singleton_patched(cursor_install_path: &Path) -> Option<bool> {
+    let path = get_util_singleton_js_path(cursor_install_path);
+    if !path.exists() {
+        return None;
+    }
+    fs::read_to_string(&path).ok().map(|c| c.contains(UTIL_PATCH_START))
+}
+
+// ========== 组合：ExtHost + util 两个文件一起处理（版本无关） ==========
+
+/// 同时给 ExtHost 与 util 单例进程打补丁。
+/// 老版本只有 ExtHost、新版本（3.9+）两者都有 —— 都打，做到版本无关。
+fn do_patch_both(cursor_install_path: &Path) -> serde_json::Value {
+    let eh = do_patch_ext_host(cursor_install_path);
+    let util = do_patch_util_singleton(cursor_install_path);
+    let eh_ok = eh.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let util_ok = util.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let ok = eh_ok && util_ok;
+    let mut errs: Vec<String> = Vec::new();
+    if !eh_ok {
+        errs.push(format!("ExtHost: {}", eh.get("error").and_then(|v| v.as_str()).unwrap_or("未知错误")));
+    }
+    if !util_ok {
+        errs.push(format!("Util: {}", util.get("error").and_then(|v| v.as_str()).unwrap_or("未知错误")));
+    }
+    let mut out = serde_json::json!({
+        "success": ok,
+        "patched": ok,
+        "exthost": eh,
+        "util": util,
+        "message": if ok { "补丁注入成功" } else { "部分补丁失败" }
+    });
+    if !ok {
+        out["error"] = serde_json::Value::String(errs.join("; "));
+    }
+    out
+}
+
+/// 同时移除两个补丁（前端按 ExtHost 结果显示）。
+fn do_unpatch_both(cursor_install_path: &Path) -> serde_json::Value {
+    let eh = do_unpatch_ext_host(cursor_install_path);
+    let _ = do_unpatch_util_singleton(cursor_install_path);
+    eh
+}
+
+/// 两个目标都满足才算已打补丁：ExtHost 必须已打；util 文件存在则也必须已打（不存在则忽略）。
+fn do_check_both_patched(cursor_install_path: &Path) -> bool {
+    let eh_ok = do_check_ext_host_patched(cursor_install_path);
+    let util_ok = match do_check_util_singleton_patched(cursor_install_path) {
+        Some(p) => p,
+        None => true,
+    };
+    eh_ok && util_ok
 }
 
 // ========== Token file operations ==========
@@ -800,7 +1077,7 @@ pub async fn patch_ext_host(app: AppHandle) -> serde_json::Value {
         }
     };
     let install_path = cursor_paths::get_cursor_install_from_base_path(&base_path);
-    let result = do_patch_ext_host(&install_path);
+    let result = do_patch_both(&install_path);
 
     // 补丁注入成功（或已存在）→ 启动自动重补监控
     if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -826,7 +1103,7 @@ pub async fn unpatch_ext_host() -> serde_json::Value {
         }
     };
     let install_path = cursor_paths::get_cursor_install_from_base_path(&base_path);
-    let unpatch_result = do_unpatch_ext_host(&install_path);
+    let unpatch_result = do_unpatch_both(&install_path);
 
     // 清掉 machine ID 覆盖映射 —— 补丁已经移除，文件不再有意义
     machine_id::clear_machine_id_override();
@@ -847,7 +1124,7 @@ pub async fn check_ext_host_patched(app: AppHandle) -> bool {
     if let Some(ref bp) = paths.base_path {
         if paths.error.is_none() {
             let install_path = cursor_paths::get_cursor_install_from_base_path(bp);
-            let patched = do_check_ext_host_patched(&install_path);
+            let patched = do_check_both_patched(&install_path);
             // 覆盖场景：用户重开工具时，前端 initSeamlessSwitch 会先调这个；
             // 如果检测到 patch 还在，就把自动重补监控也拉起来 —— 否则用户
             // 关掉工具再开就丢监控了。重复 start 是幂等的（内部 was_enabled 守卫）。
@@ -914,7 +1191,7 @@ pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json:
     let patched = match paths.base_path {
         Some(ref bp) if paths.error.is_none() => {
             let install_path = cursor_paths::get_cursor_install_from_base_path(bp);
-            do_check_ext_host_patched(&install_path)
+            do_check_both_patched(&install_path)
         }
         _ => false,
     };
@@ -1342,7 +1619,7 @@ fn auto_repatch_tick(app: &AppHandle) {
     };
     let install_path = cursor_paths::get_cursor_install_from_base_path(&base_path);
 
-    let patched = do_check_ext_host_patched(&install_path);
+    let patched = do_check_both_patched(&install_path);
 
     if patched {
         // 补丁还在 → 重置 missing 标记，啥都不用做
@@ -1406,8 +1683,8 @@ pub async fn toggle_auto_switch(
         if let Some(ref bp) = paths.base_path {
             if paths.error.is_none() {
                 let install_path = cursor_paths::get_cursor_install_from_base_path(bp);
-                do_unpatch_ext_host(&install_path);
-                do_patch_ext_host(&install_path);
+                do_unpatch_both(&install_path);
+                do_patch_both(&install_path);
             }
         }
 
