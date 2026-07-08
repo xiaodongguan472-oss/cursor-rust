@@ -11831,7 +11831,22 @@
 
             console.log(`📊 版本号分解: [${parts1.join(', ')}] vs [${parts2.join(', ')}]`);
 
-            
+
+
+            // 版本方案重置：旧方案版本号为 8.x / 9.x（历史遗留），新方案从 1.0.x 重新开始。
+            // 约定：新方案（主版本 1-7）恒新于旧方案（主版本 >= 8）。
+            // 否则标准数字比较会误判 9.7 > 1.0.1，把用户"更新"回旧版本。
+            const LEGACY_MAJOR_MIN = 8;
+            const isLegacy = (parts) => (parts[0] || 0) >= LEGACY_MAJOR_MIN;
+            const legacy1 = isLegacy(parts1);
+            const legacy2 = isLegacy(parts2);
+            if (legacy1 !== legacy2) {
+              const result = legacy1 ? -1 : 1; // v1 是旧方案 → v1 更旧 → -1
+              console.log(`📊 版本方案不同（v1旧=${legacy1}, v2旧=${legacy2}）→ 返回 ${result}`);
+              return result;
+            }
+
+
 
             const maxLength = Math.max(parts1.length, parts2.length);
 
