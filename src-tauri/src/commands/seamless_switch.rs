@@ -37,17 +37,30 @@ const EH_PATCH_END: &str = "/* MOCURSO_EH_PATCH_END */";
 ///     从 Cursor 启动时的内存值拼接；我们重置 storage.json 不影响内存里的"原始旧 ID"。
 ///     mapping 改为累积式后，无论 Cursor 内存里是 1 代/2 代/N 代前的旧 ID，都能映射到当前新值。
 /// v6：日志总开关 —— 默认关掉 JS 端 _mcLG()，不再创建 ~/.cursor-renewal/exthost.log
-const EH_PATCH_VERSION: u32 = 6;
+/// v9：【临时诊断 3.10.17】开日志，确认 hook 在新版是否拦到对话请求
+/// v10：【3.10.17 修复】新增 http1.1 (http/https) 原型级 hook —— 与 util v3 同源修复，
+///      应对「配了代理时 Cursor 把请求从 HTTP/2 降级到 HTTP/1.1」导致旧 http2-only hook 失效。
+const EH_PATCH_VERSION: u32 = 10;
 const EH_PATCH_VERSION_MARKER: &str = "MOCURSO_EH_PATCH_V";
 
 // === util 单例进程补丁（Cursor 3.9+ 把 AI 请求挪到了 electron-utility 单例进程）===
 // 该进程用 ESM 命名空间导入 http2（import * as x from "node:http2"），命名空间绑定是
 // 快照，require('http2').connect= 覆盖对它无效；因此改为 patch ClientHttp2Session.prototype.request
 // —— 所有 client http2 会话共享同一原型，方法在调用时解析，无论怎么导入都能拦到。
+//
+// v3【3.10.17 修复】新增 http1.1 (http/https) 原型级 hook。
+//   背景：Cursor 3.10.17 的 util 进程在「检测到 backend 配了生效代理」时，会主动把请求
+//   从 HTTP/2 降级到 HTTP/1.1（源码里那句 "Falling back to HTTP/1.1 because an effective
+//   proxy is configured"）。而我们的「模型解锁」会往 settings.json 写 http.proxy=127.0.0.1:8189，
+//   正好触发这个降级 → 请求走 Node 的 http/https 模块，绕过只 hook http2 的旧补丁 →
+//   authorization 不再被替换成 active_token → Cursor 直接用数据库里的旧 token（无感换号失效）。
+//   修复：额外 hook OutgoingMessage.prototype.setHeader（改 authorization）+
+//   ClientRequest.prototype.write/end（改 body 机器码）。原型方法在调用时解析，
+//   对 ESM 命名空间导入的 http/https 同样生效。http2 + http1.1 双覆盖，是否走代理都健壮。
 const UTIL_PATCH_START: &str = "/* MOCURSO_UTIL_PATCH_START */";
 const UTIL_PATCH_END: &str = "/* MOCURSO_UTIL_PATCH_END */";
 /// util 补丁版本号 —— 每次改 build_util_inject_code 都要 +1（旧版本检测到会自动卸载重装）。
-const UTIL_PATCH_VERSION: u32 = 1;
+const UTIL_PATCH_VERSION: u32 = 3;
 const UTIL_PATCH_VERSION_MARKER: &str = "MOCURSO_UTIL_PATCH_V";
 /// util 补丁里 _muLG() 日志开关。release 默认 false（不写 util_patch.log，零开销）。
 const UTIL_LOG_ENABLED: bool = false;
@@ -161,6 +174,7 @@ function _mcBR(buf){{const map=_mcGM();if(!buf||buf.length<8)return buf;let out=
 function _mcPB(b){{if(b==null)return b;try{{if(typeof b==='string'){{const t=b.trim();if(t.startsWith('{{')||t.startsWith('[')){{try{{const o=JSON.parse(b);return _mcSR(JSON.stringify(o));}}catch(e){{}}}}return _mcSR(b);}}if(Buffer.isBuffer(b)){{return _mcBR(b);}}if(b instanceof Uint8Array){{return _mcBR(Buffer.from(b.buffer,b.byteOffset,b.byteLength));}}if(b&&b.buffer instanceof ArrayBuffer&&typeof b.byteLength==='number'){{return _mcBR(Buffer.from(b.buffer,b.byteOffset||0,b.byteLength));}}}}catch(e){{}}return b;}}\n\
 try{{const _h2=_mcR('http2');const _oC=_h2.connect;_h2.connect=function(a,...r){{const s=_oC.call(_h2,a,...r);if(typeof a==='string'&&(a.includes('cursor.sh')||a.includes('cursor.com'))){{try{{_mcLG('http2 connect to '+a);}}catch(e){{}}const _oR=s.request.bind(s);s.request=function(h,...ra){{const t=_mcGT();if(t&&h)h['authorization']='Bearer '+t;_mcPH(h);const _rs=_oR(h,...ra);try{{const _ow=_rs.write?_rs.write.bind(_rs):null;if(_ow){{_rs.write=function(c,...rr){{return _ow(_mcPB(c),...rr);}};}}const _oe=_rs.end?_rs.end.bind(_rs):null;if(_oe){{_rs.end=function(c,...rr){{if(c==null)return _oe(...rr);return _oe(_mcPB(c),...rr);}};}}}}catch(e){{}}return _rs;}};}}return s;}};}}catch(e){{}}\n\
 try{{const _hs=_mcR('https');const _oR=_hs.request;_hs.request=function(o,...ra){{const ish=o&&typeof o==='object'&&o.hostname&&(o.hostname.includes('cursor.sh')||o.hostname.includes('cursor.com'));if(ish){{try{{_mcLG('https request to '+o.hostname+(o.path||''));}}catch(e){{}}const t=_mcGT();if(t&&o.headers)o.headers['authorization']='Bearer '+t;_mcPH(o&&o.headers);}}const _rq=_oR.call(_hs,o,...ra);if(ish){{try{{const _ow=_rq.write?_rq.write.bind(_rq):null;if(_ow){{_rq.write=function(c,...rr){{return _ow(_mcPB(c),...rr);}};}}const _oe=_rq.end?_rq.end.bind(_rq):null;if(_oe){{_rq.end=function(c,...rr){{if(c==null)return _oe(...rr);return _oe(_mcPB(c),...rr);}};}}}}catch(e){{}}}}return _rq;}};}}catch(e){{}}\n\
+try{{const _mcHttp=_mcR('http');const _mcOM=_mcHttp.OutgoingMessage;const _mcCR=_mcHttp.ClientRequest;const _mcIsCur=function(rq){{try{{if(!rq)return false;const cands=[rq.host,rq.getHeader&&rq.getHeader('host'),rq.getHeader&&rq.getHeader(':authority'),rq.path];for(const c of cands){{if(c&&(String(c).includes('cursor.sh')||String(c).includes('cursor.com')))return true;}}return false;}}catch(e){{return false;}}}};if(_mcOM&&_mcOM.prototype&&!_mcOM.prototype.__mcH1P){{_mcOM.prototype.__mcH1P=true;const _oS=_mcOM.prototype.setHeader;_mcOM.prototype.setHeader=function(n,v){{try{{if(_mcIsCur(this)&&typeof n==='string'){{const ln=n.toLowerCase();if(ln==='authorization'){{const t=_mcGT();if(t){{v='Bearer '+t;_mcLG('intercept h1 setHeader authorization token=YES');}}}}else if(typeof v==='string'){{const nv=_mcSR(v);if(nv!==v)v=nv;}}}}}}catch(e){{}}return _oS.call(this,n,v);}};_mcLG('eh h1 patch: setHeader patched');}}if(_mcCR&&_mcCR.prototype&&!_mcCR.prototype.__mcH1BP){{_mcCR.prototype.__mcH1BP=true;const _oW=_mcCR.prototype.write;const _oE=_mcCR.prototype.end;_mcCR.prototype.write=function(c,...rr){{try{{if(_mcIsCur(this)&&c!=null)c=_mcPB(c);}}catch(e){{}}return _oW.call(this,c,...rr);}};_mcCR.prototype.end=function(c,...rr){{try{{if(_mcIsCur(this)&&c!=null&&typeof c!=='function')c=_mcPB(c);}}catch(e){{}}return _oE.call(this,c,...rr);}};_mcLG('eh h1 patch: ClientRequest.write/end patched');}}}}catch(e){{}}\n\
 try{{if(typeof globalThis.fetch==='function'&&!globalThis._mcOF2){{globalThis._mcOF2=globalThis.fetch;globalThis.fetch=function(i,init){{const t=_mcGT();let u=typeof i==='string'?i:(i instanceof URL?i.href:i?.url||'');const ish=u&&(u.includes('cursor.sh')||u.includes('cursor.com'));if(ish){{try{{_mcLG('fetch to '+u);}}catch(e){{}}init=init||{{}};init.headers=init.headers||{{}};if(t){{if(typeof init.headers.set==='function')init.headers.set('authorization','Bearer '+t);else init.headers['authorization']='Bearer '+t;}}try{{if(init.headers&&typeof init.headers==='object'&&typeof init.headers.set!=='function'){{_mcPH(init.headers);}}else if(init.headers&&typeof init.headers.forEach==='function'){{const ks=[];init.headers.forEach((v,k)=>ks.push([k,v]));for(const [k,v] of ks){{if(typeof v==='string'){{const nv=_mcSR(v);if(nv!==v)init.headers.set(k,nv);}}}}}}if(init.body!=null){{init.body=_mcPB(init.body);}}}}catch(e){{}}}}return globalThis._mcOF2(i,init);}};}}}}catch(e){{}}\n\
 {end}\n",
         start = EH_PATCH_START,
@@ -236,6 +250,41 @@ try{
     _muLG('util patch v1 loaded, prototype.request patched');
   }else{_muLG('util patch: proto unavailable or already patched');}
 }catch(e){_muLG('util patch fatal '+e);}
+try{
+  const _muHttp=_muR('http');
+  const _muOM=_muHttp.OutgoingMessage;
+  const _muCR=_muHttp.ClientRequest;
+  const _muIsCur=function(rq){try{if(!rq)return false;const cands=[rq.host,rq.getHeader&&rq.getHeader('host'),rq.getHeader&&rq.getHeader(':authority'),rq.path];for(const c of cands){if(c&&(String(c).includes('cursor.sh')||String(c).includes('cursor.com')))return true;}return false;}catch(e){return false;}};
+  if(_muOM&&_muOM.prototype&&!_muOM.prototype.__muH1P){
+    _muOM.prototype.__muH1P=true;
+    const _oSet=_muOM.prototype.setHeader;
+    _muOM.prototype.setHeader=function(name,value){
+      try{
+        if(_muIsCur(this)&&typeof name==='string'){
+          const ln=name.toLowerCase();
+          if(ln==='authorization'){const t=_muGT();if(t){value='Bearer '+t;_muLG('intercept h1 setHeader authorization token=YES');}}
+          else if(typeof value==='string'){const nv=_muSR(value);if(nv!==value)value=nv;}
+        }
+      }catch(e){_muLG('h1 setHeader err '+e);}
+      return _oSet.call(this,name,value);
+    };
+    _muLG('util h1 patch: OutgoingMessage.setHeader patched');
+  }
+  if(_muCR&&_muCR.prototype&&!_muCR.prototype.__muH1BP){
+    _muCR.prototype.__muH1BP=true;
+    const _oW=_muCR.prototype.write;
+    const _oE=_muCR.prototype.end;
+    _muCR.prototype.write=function(chunk,...rest){
+      try{if(_muIsCur(this)&&chunk!=null)chunk=_muPB(chunk);}catch(e){}
+      return _oW.call(this,chunk,...rest);
+    };
+    _muCR.prototype.end=function(chunk,...rest){
+      try{if(_muIsCur(this)&&chunk!=null&&typeof chunk!=='function')chunk=_muPB(chunk);}catch(e){}
+      return _oE.call(this,chunk,...rest);
+    };
+    _muLG('util h1 patch: ClientRequest.write/end patched');
+  }
+}catch(e){_muLG('util h1 patch fatal '+e);}
 __END__
 "##;
     js.replace("__START__", UTIL_PATCH_START)
