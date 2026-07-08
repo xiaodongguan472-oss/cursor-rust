@@ -1,6 +1,6 @@
 [package]
 name = "cursor-renewal"
-version = "1.0.1"
+version = "10.0.0"
 description = "Cursor续杯助手 - Rust + Tauri"
 authors = ["developer"]
 edition = "2021"
