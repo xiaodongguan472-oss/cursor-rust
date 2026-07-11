@@ -336,7 +336,7 @@ fn do_patch_ext_host(cursor_install_path: &Path) -> serde_json::Value {
         crate::ulog!("[ExtHost] ✗ file not found");
         return serde_json::json!({
             "success": false, "patched": false,
-            "error": "未找到 Cursor 核心文件，请确认 Cursor 已正确安装或重新指定路径"
+            "error": format!("extensionHostProcess.js not found: {}", eh_path.display())
         });
     }
 
@@ -609,21 +609,19 @@ fn do_patch_both(cursor_install_path: &Path) -> serde_json::Value {
     let ok = eh_ok && util_ok;
     let mut errs: Vec<String> = Vec::new();
     if !eh_ok {
-        errs.push(eh.get("error").and_then(|v| v.as_str()).unwrap_or("未知错误").to_string());
+        errs.push(format!("ExtHost: {}", eh.get("error").and_then(|v| v.as_str()).unwrap_or("未知错误")));
     }
     if !util_ok {
-        errs.push(util.get("error").and_then(|v| v.as_str()).unwrap_or("未知错误").to_string());
+        errs.push(format!("Util: {}", util.get("error").and_then(|v| v.as_str()).unwrap_or("未知错误")));
     }
     let mut out = serde_json::json!({
         "success": ok,
         "patched": ok,
         "exthost": eh,
         "util": util,
-        "message": if ok { "操作成功" } else { "操作失败" }
+        "message": if ok { "补丁注入成功" } else { "部分补丁失败" }
     });
     if !ok {
-        // 去重后拼接原因（两个进程可能报同一个错，如「未找到 Cursor 安装路径」）
-        errs.dedup();
         out["error"] = serde_json::Value::String(errs.join("; "));
     }
     out
@@ -1109,13 +1107,12 @@ pub async fn patch_ext_host(app: AppHandle) -> serde_json::Value {
     let unlock_err = match unlock_result {
         Ok(Ok(())) => None,
         Ok(Err(e)) => Some(e),
-        Err(e) => Some(format!("任务调度失败: {}", e)),
+        Err(e) => Some(format!("解锁任务调度失败: {}", e)),
     };
     if let Some(e) = unlock_err {
-        // 只返回失败原因，功能名前缀由前端统一添加（避免暴露「模型解锁」等内部实现）
         return serde_json::json!({
             "success": false, "patched": false,
-            "error": e
+            "error": format!("激活无感换号失败: {}", e)
         });
     }
 
@@ -1252,7 +1249,7 @@ pub async fn one_click_switch(db_path: String, card_code: String) -> serde_json:
     if !patched {
         return serde_json::json!({
             "success": false,
-            "error": "请先开启「激活无感换号」"
+            "error": "请先开启请求拦截（ExtensionHost 补丁）"
         });
     }
 

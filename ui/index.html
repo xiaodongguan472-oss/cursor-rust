@@ -10982,7 +10982,7 @@
                 } else {
 
                   const err = result.error || '未知错误';
-                  if (this.isPermissionError(err)) { this.showPermissionTip(); } else { ElMessage.error('关闭激活无感换号失败: ' + err); }
+                  if (this.isPermissionError(err)) { this.showPermissionTip(); } else { ElMessage.error('操作失败: ' + err); }
 
                 }
 
@@ -11001,7 +11001,7 @@
                 } else {
 
                   const err = result.error || '未知错误';
-                  if (this.isPermissionError(err)) { this.showPermissionTip(); } else { ElMessage.error('激活无感换号失败: ' + err); }
+                  if (this.isPermissionError(err)) { this.showPermissionTip(); } else { ElMessage.error('操作失败: ' + err); }
 
                 }
 
@@ -11009,9 +11009,9 @@
 
             } catch (error) {
 
-              console.error('激活无感换号失败:', error);
+              console.error('切换 ExtensionHost 补丁失败:', error);
 
-              if (this.isPermissionError(error.message)) { this.showPermissionTip(); } else { ElMessage.error('激活无感换号失败: ' + error.message); }
+              if (this.isPermissionError(error.message)) { this.showPermissionTip(); } else { ElMessage.error('操作失败: ' + error.message); }
 
             }
 
@@ -11223,13 +11223,13 @@
 
               } else {
 
-                ElMessage.error('自动换号失败: ' + (result?.error || '未知错误'));
+                ElMessage.error('操作失败: ' + (result?.error || '未知错误'));
 
               }
 
             } catch (e) {
 
-              ElMessage.error('自动换号失败: ' + e.message);
+              ElMessage.error('操作失败: ' + e.message);
 
             }
 
@@ -11457,7 +11457,7 @@
                 } else {
 
                   const err = patchResult.error || '未知错误';
-                  if (this.isPermissionError(err)) { this.showPermissionTip(); } else { ElMessage.error('激活无感换号失败: ' + err); }
+                  if (this.isPermissionError(err)) { this.showPermissionTip(); } else { ElMessage.error('操作失败: ' + err); }
 
                   return;
 
@@ -11465,7 +11465,7 @@
 
               } catch (e) {
 
-                if (this.isPermissionError(e.message)) { this.showPermissionTip(); } else { ElMessage.error('激活无感换号失败: ' + e.message); }
+                if (this.isPermissionError(e.message)) { this.showPermissionTip(); } else { ElMessage.error('操作失败: ' + e.message); }
 
                 return;
 
