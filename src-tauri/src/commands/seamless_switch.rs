@@ -11,6 +11,7 @@ use super::utils;
 use super::cursor_paths;
 use super::machine_id;
 use super::unlock_mitm;
+use super::unlock_workbench;
 
 static AUTO_SWITCH_ENABLED: AtomicBool = AtomicBool::new(false);
 static AUTO_SWITCH_BUSY: AtomicBool = AtomicBool::new(false);
@@ -1093,11 +1094,15 @@ async fn do_seamless_switch(
 
 #[tauri::command]
 pub async fn patch_ext_host(app: AppHandle) -> serde_json::Value {
-    // === 模型解锁前置步骤：保证 MITM 链路已就绪 ===
-    // 用户开启「激活无感换号」时，先确保 UI 解锁（CA + 环境变量 + settings.json + MITM）已部署。
-    // 如果已经部署过（重启程序场景），unlock_enable 内部各步骤都是幂等的，开销很小。
+    // === 模型解锁：改写渲染进程 workbench JS（storeMembershipType 强制 pro）===
+    // v2 方案：不再用 MITM 代理 + http.proxy（会拖垮 3.11+ 的 AI 流量），
+    // 改为直接注入渲染进程 JS。是幂等的，重复激活开销很小。
     let unlock_result = tokio::task::spawn_blocking(|| {
-        unlock_mitm::enable_unlock()
+        // 先清理旧 MITM 方案的遗留（老用户升级）：删 settings.json 的 http.proxy、
+        // 清 NODE_EXTRA_CA_CERTS、删系统信任根里的 CA。彻底摆脱代理导致的 AI 报错。
+        unlock_mitm::cleanup_legacy_mitm();
+        // 再注入 workbench 解锁补丁
+        unlock_workbench::enable_unlock()
     }).await;
     let unlock_err = match unlock_result {
         Ok(Ok(())) => None,
@@ -1109,10 +1114,6 @@ pub async fn patch_ext_host(app: AppHandle) -> serde_json::Value {
             "success": false, "patched": false,
             "error": format!("模型解锁部署失败: {}", e)
         });
-    }
-    // MITM 需要在 tokio runtime 上启动（spawn_blocking 内不能 spawn 异步任务到代理）
-    if !unlock_mitm::is_mitm_running() {
-        let _ = unlock_mitm::start_mitm_in_background();
     }
 
     let paths = cursor_paths::get_cursor_paths();
@@ -1157,11 +1158,12 @@ pub async fn unpatch_ext_host() -> serde_json::Value {
     // 清掉 machine ID 覆盖映射 —— 补丁已经移除，文件不再有意义
     machine_id::clear_machine_id_override();
 
-    // === 模型解锁后置步骤：关闭 MITM、清环境变量 / settings.json / 删 CA ===
-    // 用户关闭「激活无感换号」时彻底回退：证书 + 环境变量 + 代理键都清掉。
-    unlock_mitm::stop_mitm();
+    // === 模型解锁后置步骤：还原 workbench JS + 清理旧 MITM 遗留 ===
+    // 用户关闭「激活无感换号」时彻底回退：还原渲染进程文件；
+    // 同时清掉老版本可能残留的 proxy / CA（幂等，无残留则 no-op）。
     let _ = tokio::task::spawn_blocking(|| {
-        let _ = unlock_mitm::disable_unlock();
+        let _ = unlock_workbench::disable_unlock();
+        unlock_mitm::cleanup_legacy_mitm();
     }).await;
 
     unpatch_result

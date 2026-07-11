@@ -19,17 +19,18 @@ fn main() {
 
     tauri::Builder::default()
         .setup(|_app| {
-            // 1. 预先初始化 rustls 的 aws-lc-rs crypto provider，
-            //    把首次 ~200-500ms 的 C 库 / 算法表初始化分摊到启动期 ——
-            //    用户点「激活无感换号」时就不用再付这笔启动延迟。
+            // 1. 迁移清理：老版本用 MITM 代理解锁，会在 settings.json 留下
+            //    http.proxy=127.0.0.1:8189 —— 这正是 Cursor 3.11+ 下 AI 报错的元凶。
+            //    启动时静默清掉旧代理 / CA 遗留，让升级用户无需手动改 settings.json。
+            //    幂等：无残留则各步骤 no-op。
             tauri::async_runtime::spawn_blocking(|| {
-                commands::unlock_mitm::preinit_crypto_provider();
+                commands::unlock_mitm::cleanup_legacy_mitm();
             });
 
-            // 2. 模型解锁自动恢复：如果用户之前开过解锁、证书还在系统信任根里，
-            //    程序启动时静默重启 MITM 代理，无需用户重新点击「激活无感换号」。
+            // 2. 模型解锁改为渲染进程 workbench 注入，由用户显式开关驱动，
+            //    启动时不擅自注入（保留占位调用，当前为 no-op）。
             tauri::async_runtime::spawn(async {
-                commands::unlock_mitm::auto_restore_on_startup();
+                commands::unlock_workbench::auto_restore_on_startup();
             });
 
             // 3. 禁用 Cursor 自动更新：确保用户 settings.json 中 update.mode = none

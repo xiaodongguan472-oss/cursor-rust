@@ -353,6 +353,7 @@ pub fn start_mitm_in_background() -> Result<(), String> {
 /// 在程序启动早期调用一次，提前完成 aws-lc-rs crypto provider 的进程级初始化。
 /// 这一步在首次调用时会做 ~200-500ms 的内部初始化（C 库 + 算法表载入）；
 /// 提前到启动期分摊后，用户点「激活无感换号」时就不用再付这笔时间。
+#[allow(dead_code)]
 pub fn preinit_crypto_provider() {
     let _ = aws_lc_rs::default_provider().install_default();
 }
@@ -1141,6 +1142,7 @@ pub fn cursor_proxy_settings_applied() -> bool {
 
 /// 完整开启 UI 解锁：CA 装系统 → 设环境变量 → 写 settings.json → 启 MITM。
 /// 任一步失败：尝试回滚已执行的步骤，返回错误。
+#[allow(dead_code)]
 pub fn enable_unlock() -> Result<(), String> {
     ensure_ca_exists()?;
 
@@ -1172,6 +1174,7 @@ pub fn enable_unlock() -> Result<(), String> {
 }
 
 /// 完整关闭：停 MITM → 删 settings.json 代理键 → 清环境变量 → 删 CA。
+#[allow(dead_code)]
 pub fn disable_unlock() -> Result<(), String> {
     stop_mitm();
     let _ = clear_cursor_proxy_settings();
@@ -1185,7 +1188,29 @@ pub fn disable_unlock() -> Result<(), String> {
     Ok(())
 }
 
+/// 清理旧 MITM 方案的一切遗留 —— 供新（workbench 注入）方案在启用/停用时调用。
+///
+/// v2 解锁方案不再需要 MITM 代理，但老用户升级后 settings.json 里可能还留着
+/// `http.proxy=127.0.0.1:8189`（这正是导致 3.11+ AI 报错的元凶），系统信任根里
+/// 也可能还有旧 CA。这里把它们全部清掉，且是幂等的（无残留则各步骤 no-op）。
+///
+/// 与 disable_unlock 的区别：语义上这是「迁移清理」，即使用户正在用新方案解锁
+/// 也应该执行（清代理不影响 workbench 注入的解锁效果）。
+pub fn cleanup_legacy_mitm() {
+    // 1. 停掉可能还在跑的 MITM 监听
+    stop_mitm();
+    // 2. 删 settings.json 里的 http.proxy / systemCertificatesV2（AI 报错根因）
+    let _ = clear_cursor_proxy_settings();
+    // 3. 清 NODE_EXTRA_CA_CERTS 环境变量
+    clear_node_extra_ca_certs();
+    // 4. 从系统信任根删旧 CA + 删本地 PEM
+    uninstall_ca_from_system_store();
+    let _ = fs::remove_file(ca_cert_pem_path());
+    let _ = fs::remove_file(ca_key_pem_path());
+}
+
 /// 程序启动时调用：如果检测到 CA 已经安装 → 自动启 MITM 代理（用户偏好）。
+#[allow(dead_code)]
 pub fn auto_restore_on_startup() {
     // 没生成过 CA → 用户从来没开过解锁 → 跳过
     if !ca_cert_pem_path().exists() {
