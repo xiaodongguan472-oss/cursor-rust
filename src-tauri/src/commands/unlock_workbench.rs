@@ -173,16 +173,17 @@ pub fn enable_unlock() -> Result<(), String> {
                     desktop_ok = true; // 已经注入过也算成功
                 }
             }
-            Err(e) => errors.push(format!("{}: {}", name, e)),
+            Err(e) => errors.push(e),
         }
     }
 
     if desktop_ok {
         Ok(())
     } else if !errors.is_empty() {
+        errors.dedup();
         Err(errors.join("; "))
     } else {
-        Err("未找到可注入的 workbench 文件（Cursor 版本可能已变更解锁实现）".to_string())
+        Err("未找到 Cursor 核心文件，请确认 Cursor 已正确安装或重新指定路径".to_string())
     }
 }
 
