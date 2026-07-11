@@ -30,11 +30,21 @@ use super::cursor_paths;
 
 /// 幂等标记 —— 注入时插入，检查/避免重复注入靠它。
 const UNLOCK_MARKER: &str = "/*MOCURSO_MODELUNLOCK*/";
-/// 注入锚点（渲染进程会员状态写入函数）
-const UNLOCK_ANCHOR: &str = "this.storeMembershipType=s=>{";
-/// 注入后的替换串（锚点 + 标记 + 强制 pro）
-fn unlock_injected() -> String {
-    format!("{}{}s='pro';", UNLOCK_ANCHOR, UNLOCK_MARKER)
+
+/// 注入锚点正则：`storeMembershipType=<参数>=>{`
+///
+/// 关键：参数名随 Cursor 版本 / 混淆而变（3.5.17 是 `r`、3.11 是 `s`、其它版本可能不同），
+/// 所以不能硬编码参数名，用正则捕获实际参数名，注入时复用它把该参数强制改成 'pro'。
+///   3.5.17: storeMembershipType=r=>{  → storeMembershipType=r=>{/*MARKER*/r='pro';
+///   3.11:   storeMembershipType=s=>{  → storeMembershipType=s=>{/*MARKER*/s='pro';
+fn unlock_regex() -> regex::Regex {
+    // 捕获组 1 = 参数名（合法 JS 标识符）
+    regex::Regex::new(r"storeMembershipType=([A-Za-z_$][\w$]*)=>\{").unwrap()
+}
+
+/// 由匹配到的参数名构造「已注入」形态字符串，用于还原时定位。
+fn injected_form(param: &str) -> String {
+    format!("storeMembershipType={p}=>{{{m}{p}='pro';", p = param, m = UNLOCK_MARKER)
 }
 
 /// 需要处理的两个渲染进程文件名（desktop 常规窗口 / glass 新 UI）。
@@ -75,8 +85,16 @@ fn patch_one(path: &Path) -> Result<bool, String> {
     if content.contains(UNLOCK_MARKER) {
         return Ok(false);
     }
-    // 锚点不存在（Cursor 换了实现）→ 不报错，交由上层判断整体成败
-    if !content.contains(UNLOCK_ANCHOR) {
+
+    // 正则匹配 storeMembershipType=<参数>=>{  —— 捕获参数名
+    let re = unlock_regex();
+    let caps = match re.captures(&content) {
+        Some(c) => c,
+        // 锚点不存在（Cursor 换了实现）→ 不报错，交由上层判断整体成败
+        None => return Ok(false),
+    };
+    let param = caps.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+    if param.is_empty() {
         return Ok(false);
     }
 
@@ -86,8 +104,12 @@ fn patch_one(path: &Path) -> Result<bool, String> {
         let _ = fs::copy(path, &bak);
     }
 
-    // 只替换第一处锚点（锚点本就唯一）
-    let new_content = content.replacen(UNLOCK_ANCHOR, &unlock_injected(), 1);
+    // 只替换第一处（锚点本就唯一）：storeMembershipType=<p>=>{ → 后面插 /*MARKER*/<p>='pro';
+    // 用 NoExpand 避免替换串里的 `$`（参数名可能以 $ 开头）被当成捕获组引用。
+    let replacement = injected_form(&param);
+    let new_content = re
+        .replace(&content, regex::NoExpand(replacement.as_str()))
+        .into_owned();
 
     utils::safe_modify_file(path, || {
         fs::write(path, &new_content).map_err(|e| format!("写入失败: {}", e))
@@ -104,7 +126,16 @@ fn unpatch_one(path: &Path) -> Result<(), String> {
     if !content.contains(UNLOCK_MARKER) {
         return Ok(()); // 没注入过
     }
-    let new_content = content.replace(&unlock_injected(), UNLOCK_ANCHOR);
+    // 已注入形态：storeMembershipType=<p>=>{/*MARKER*/<p>='pro';  → 还原成 storeMembershipType=<p>=>{
+    // 注意：Rust regex 不支持反向引用（\1），所以两个 <p> 分别用独立捕获组匹配
+    // （实际它们相等，但正则层面不强制；MARKER 唯一已足够保证只命中我们注入的那处）。
+    let restore_re = regex::Regex::new(&format!(
+        r"storeMembershipType=([A-Za-z_$][\w$]*)=>\{{{}[A-Za-z_$][\w$]*='pro';",
+        regex::escape(UNLOCK_MARKER)
+    )).map_err(|e| format!("构造还原正则失败: {}", e))?;
+    let new_content = restore_re
+        .replace(&content, "storeMembershipType=$1=>{")
+        .into_owned();
     utils::safe_modify_file(path, || {
         fs::write(path, &new_content).map_err(|e| format!("写入失败: {}", e))
     })
@@ -185,3 +216,4 @@ pub fn is_unlock_enabled() -> bool {
 pub fn auto_restore_on_startup() {
     // no-op：解锁状态由用户显式开关驱动，启动时不擅自注入。
 }
+
