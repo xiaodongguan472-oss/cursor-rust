@@ -885,6 +885,32 @@ async fn fetch_stripe_profile(token: &str) -> Result<serde_json::Value, String> 
     .await
 }
 
+/// 把版本号字符串解析成 (major, minor)，例如 "3.5.1" → (3, 5)、"3.6" → (3, 6)。
+/// 解析失败返回 None。允许前缀 'v'，忽略 minor 之后的补丁号。
+fn parse_major_minor(ver: &str) -> Option<(u32, u32)> {
+    let mut it = ver.trim().trim_start_matches(['v', 'V']).split('.');
+    let major = it.next()?.trim().parse::<u32>().ok()?;
+    let minor = it.next().unwrap_or("0").trim().parse::<u32>().ok()?;
+    Some((major, minor))
+}
+
+/// 读取「续杯工具检测到的」Cursor 版本号（来自 package.json），解析成 (major, minor)。
+/// 读不到 / 解析失败返回 None。
+fn get_cursor_major_minor() -> Option<(u32, u32)> {
+    let paths = cursor_paths::get_cursor_paths();
+    parse_major_minor(paths.version.as_deref()?)
+}
+
+/// 该版本是否走「旧版额度判定」（Cursor <= 3.5，含 3.5）。
+/// 旧版没有新版的 auto 模型额度拆分口径，用「总额度用量 > 90%」这一条阈值最稳。
+/// 检测不到版本时返回 false —— 回退到新版逻辑（保守，不改变既有行为）。
+fn is_legacy_quota_version(mm: Option<(u32, u32)>) -> bool {
+    match mm {
+        Some((major, minor)) => major < 3 || (major == 3 && minor <= 5),
+        None => false,
+    }
+}
+
 async fn do_check_account_status(token: &str) -> serde_json::Value {
     // ── 检查 1: token 是否过期 ──
     if token.is_empty() {
@@ -934,8 +960,18 @@ async fn do_check_account_status(token: &str) -> serde_json::Value {
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0);
 
+                // 依据「续杯工具检测到的 Cursor 版本号」选择额度判定逻辑：
+                //   - Cursor <= 3.5：只看总额度用量，> 90% 即换号（旧版无新版 auto 拆分口径，
+                //     沿用总容量阈值最稳，检测口径同「cursor账号服用检测.py」的 totalPercentUsed）
+                //   - Cursor >= 3.6（含检测不到版本时回退）：维持原判定逻辑
+                if is_legacy_quota_version(get_cursor_major_minor()) {
+                    if percent_used > 90.0 {
+                        needs_switch = true;
+                        reason = "quota_exhausted_percent".to_string();
+                    }
+                }
                 // 判定 1：总用量阈值
-                if percent_used >= 95.0 {
+                else if percent_used >= 95.0 {
                     needs_switch = true;
                     reason = "quota_exhausted_percent".to_string();
                 }
