@@ -6144,27 +6144,25 @@
 
         </div>
 
-        <div class="proxy-alert-title">请关闭网络代理</div>
+        <div class="proxy-alert-title">网络连接失败</div>
 
         <div class="proxy-alert-content">
 
-          <p>检测到API请求失败，通常是由网络代理引起的，<strong>请按以下步骤操作：</strong></p>
+          <p>检测到网络请求失败，<strong>请按以下步骤操作：</strong></p>
 
           <ol>
 
-            <li><strong>关闭魔法</strong>或代理软件</li>
+            <li><strong>更换一个 WiFi</strong> 或切换网络</li>
 
-            <li><strong>断开代理连接</strong>（如有使用）</li>
+            <li><strong>重启续杯工具</strong></li>
 
-            <li><strong>重新启动续杯助手</strong></li>
-
-            <li>重新点击"<strong>刷新Cursor</strong>"按钮</li>
+            <li>再试试是否恢复正常</li>
 
           </ol>
 
           <div class="proxy-tip">
 
-            <strong>提示：</strong>代理或魔法可能会阻止程序正常访问续杯服务器
+            <strong>提示：</strong>如果换网络并重启后仍然不行，请联系客服处理
 
           </div>
 
@@ -6175,12 +6173,6 @@
           <button class="proxy-alert-btn" @click="closeProxyAlert">
 
             我知道了
-
-          </button>
-
-          <button class="proxy-alert-btn secondary" @click="openHelpDocument">
-
-            还是不行
 
           </button>
 
@@ -6512,13 +6504,17 @@
             main ? main.scrollWidth : 0
           );
           const neededHeight = Math.max(680, app.scrollHeight);
+          // 以可用空间与所需空间之比作为缩放系数。上限 1（不放大，保持设计
+          // 尺寸），只有当窗口装不下内容时才等比缩小，避免界面被过度撑大。
           let scale = Math.min(1, availableWidth / neededWidth, availableHeight / neededHeight);
 
           if (!Number.isFinite(scale) || scale <= 0) {
             scale = 1;
           }
 
-          root.style.setProperty('--ui-scale', String(Math.max(0.82, scale)));
+          // 下限 0.82 防止过度压缩。
+          scale = Math.max(0.82, scale);
+          root.style.setProperty('--ui-scale', String(scale));
         });
       });
     }
@@ -6770,7 +6766,7 @@
 
             // 版本检查相关
 
-            currentVersion: '10.0.3', // 当前版本号，需要与显示的版本号保持一致
+            currentVersion: '10.0.4', // 当前版本号，需要与显示的版本号保持一致
 
             latestVersion: null,   // 最新版本号
 
